@@ -10,7 +10,7 @@
 #define MOTOR_PID_INVERT_CH1 false
 #define MOTOR_PID_INVERT_CH2 false
 #define MOTOR_PID_INVERT_CH3 false
-#define MOTOR_PID_INVERT_CH4 false
+#define MOTOR_PID_INVERT_CH4 true
 
 #define AS5600_PI 3.1415926535897932384626433832795
 
@@ -340,20 +340,13 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
     }
     float pid_sign = m.dir * (pid_invert ? -1.0f : 1.0f);
 
-    if (MC_ONLINE_key_stu[CHx] == 0) {
-      Assist_send_filament[CHx] = true;
-    }
-    if (Assist_send_filament[CHx] && is_two) {
-      if (MC_ONLINE_key_stu[CHx] == 2)
-        x = -m.dir * 666;
+    // Slider always active: no filament sensor guard
+    if (MC_PULL_stu[CHx] != 0) {
+      x = pid_sign *
+          m.PID_pressure.Calculate(MC_PULL_stu_raw[CHx] - data_save.pressure_zero[CHx], time_E);
     } else {
-      if (MC_ONLINE_key_stu[CHx] != 0 && MC_PULL_stu[CHx] != 0) {
-        x = pid_sign *
-            m.PID_pressure.Calculate(MC_PULL_stu_raw[CHx] - data_save.pressure_zero[CHx], time_E);
-      } else {
-        x = 0;
-        m.PID_pressure.Clear();
-      }
+      x = 0;
+      m.PID_pressure.Clear();
     }
   } else if (MC_ONLINE_key_stu[CHx] != 0 ||
              m.motion == filament_motion_enum::velocity_control) {
