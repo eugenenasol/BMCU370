@@ -7,10 +7,10 @@
 #define MOTOR_INVERT_CH3 true
 #define MOTOR_INVERT_CH4 true
 
-#define MOTOR_PID_INVERT_CH1 true
-#define MOTOR_PID_INVERT_CH2 true
-#define MOTOR_PID_INVERT_CH3 true
-#define MOTOR_PID_INVERT_CH4 true
+#define MOTOR_PID_INVERT_CH1 false
+#define MOTOR_PID_INVERT_CH2 false
+#define MOTOR_PID_INVERT_CH3 false
+#define MOTOR_PID_INVERT_CH4 false
 
 #define AS5600_PI 3.1415926535897932384626433832795
 
@@ -246,7 +246,7 @@ void MMU_Logic::AS5600_Update(float time_E) {
     else if (now <= 1024 && last > 3072)
       cir_E = 4096;
 
-    float dist_E = -(float)(now - last + cir_E) * AS5600_PI * 7.5 / 4096;
+    float dist_E = (float)(now - last + cir_E) * AS5600_PI * 7.5 / 4096;
     as5600_distance_save[i] = now;
 
     float speedx = dist_E / (time_E > 0 ? time_E : 0.001f);
@@ -736,7 +736,7 @@ void MMU_Logic::MoveAxis(int axis, float dist_mm, float speed) {
   if (axis < 0 || axis >= 4)
     return;
   motors[axis].target_velocity =
-      (dist_mm >= 0) ? -__builtin_fabsf(speed) : __builtin_fabsf(speed);
+      (dist_mm >= 0) ? __builtin_fabsf(speed) : -__builtin_fabsf(speed);
   motors[axis].target_distance = __builtin_fabsf(dist_mm);
   motors[axis].SetMotion(filament_motion_enum::velocity_control);
 }
