@@ -71,7 +71,7 @@ namespace KlipperCLI {
         doc["result"] = "ok";
         
         LiteObject& t = doc["telemetry"].makeObject();
-        t["version"] = "00.00.05.00"; 
+        t["version"] = "00.00.07.00"; 
         t["uptime"] = (int)millis();
         
         SendResponse(doc);
@@ -129,6 +129,11 @@ namespace KlipperCLI {
             
              int p_int = f.pressure / 1000;
              int p_dec = f.pressure % 1000;
+             
+             float p_zero_f = _mmu->GetPressureZero(i);
+             int p_zero_int = (int)p_zero_f;
+             int p_zero_dec = (int)((p_zero_f - p_zero_int) * 1000);
+             if (p_zero_dec < 0) p_zero_dec = -p_zero_dec;
             
              if (offset >= (int)sizeof(global_json_buf) - 256) {
                  // Danger zone: not enough space for a full lane record
@@ -139,10 +144,10 @@ namespace KlipperCLI {
              const char* sign = (meters_f < 0 && m_int == 0) ? "-" : "";
 
              int n = snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, 
-                "{\"id\":%d,\"present\":%s,\"motion\":\"%s\",\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"rfid\":\"%s\",\"name\":\"%s\",\"temp_min\":%d,\"temp_max\":%d,\"color\":[%d,%d,%d,%d]}",
+                "{\"id\":%d,\"present\":%s,\"motion\":\"%s\",\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"pressure_zero\":%d.%03d,\"rfid\":\"%s\",\"name\":\"%s\",\"temp_min\":%d,\"temp_max\":%d,\"color\":[%d,%d,%d,%d]}",
                 i, 
                 (sensors & (1<<i)) ? "true" : "false",
-                m_str, sign, m_int, m_dec, p_int, p_dec, safe_id, safe_name, f.temperature_min, f.temperature_max, f.color_R, f.color_G, f.color_B, f.color_A);
+                m_str, sign, m_int, m_dec, p_int, p_dec, p_zero_int, p_zero_dec, safe_id, safe_name, f.temperature_min, f.temperature_max, f.color_R, f.color_G, f.color_B, f.color_A);
              
              if (n > 0) {
                  if (offset + n >= (int)sizeof(global_json_buf)) {
@@ -154,8 +159,12 @@ namespace KlipperCLI {
          }
          
          // Finalize manually built JSON with closing array and object
-         // Finalize manually built JSON with closing array and object
-         int trailing = snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "]}\r\n");
+         float tol = _mmu->GetPressureTolerance();
+         int t_int = (int)tol;
+         int t_dec = (int)((tol - t_int) * 1000);
+         if(t_dec < 0) t_dec = -t_dec;
+         
+         int trailing = snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "],\"pressure_tolerance\":%d.%03d}\r\n", t_int, t_dec);
          
          if (trailing < 0 || offset + trailing >= (int)sizeof(global_json_buf)) {
              SendError(id, "BUFFER_OVERFLOW", "Status too large");
@@ -357,6 +366,67 @@ namespace KlipperCLI {
          SendOk(id);
     }
 
+    void HandleCalibrate(int id, JsonObject args) {
+         if (!_mmu) return;
+         int lane = -1;
+         if(args["lane"].isInt()) {
+             lane = args["lane"];
+         }
+         
+         CalibrateResult res = _mmu->CalibratePressure(lane);
+         
+         if (!res.ok) {
+             SendError(id, "BUSY", res.error_msg);
+             return;
+         }
+         
+         WaitTX();
+         int offset = 0;
+         offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, 
+             "{\"id\":%d,\"cmd\":\"CALIBRATE\",\"ok\":true", id);
+             
+         if (lane == -1) {
+             offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, ",\"results\":{");
+             uint16_t sensors = _mmu->GetSensorState();
+             for (int i = 0; i < 4; i++) {
+                 if (i > 0) offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, ",");
+                 
+                 if (sensors & (1 << i)) {
+                     // Busy
+                     offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "\"%d\":{\"status\":\"busy\"}", i);
+                 } else {
+                     float p = _mmu->GetPressureZero(i);
+                     int p_int = (int)p;
+                     int p_dec = (int)((p - p_int) * 1000);
+                     if(p_dec < 0) p_dec = -p_dec;
+                     offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "\"%d\":{\"status\":\"calibrated\",\"value\":%d.%03d}", i, p_int, p_dec);
+                 }
+             }
+             offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "}");
+         } else {
+             float p = res.value;
+             int p_int = (int)p;
+             int p_dec = (int)((p - p_int) * 1000);
+             if(p_dec < 0) p_dec = -p_dec;
+             offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, ",\"lane\":%d,\"value\":%d.%03d", lane, p_int, p_dec);
+         }
+         
+         offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "}\r\n");
+         if (_transport) _transport->Write((const uint8_t*)global_json_buf, offset);
+    }
+    
+    void HandleSetTolerance(int id, JsonObject args) {
+         if (!_mmu) return;
+         if(!args["value"].isFloat() && !args["value"].isInt()) {
+             SendError(id, "BAD_ARGS", "Missing value float"); 
+             return;
+         }
+         float val = args["value"];
+         _mmu->SetPressureTolerance(val);
+         _mmu->SetNeedToSave();
+         SendOk(id);
+    }
+
     void ProcessPacket(char* json_str) {
         // Guard against null or empty input
         if (!json_str || json_str[0] == '\0') {
@@ -409,6 +479,8 @@ namespace KlipperCLI {
         else if (strcmp(cmd, "SET_AUTO_FEED") == 0) HandleSetAutoFeed(id, args);
         else if (strcmp(cmd, "GET_FILAMENT_INFO") == 0) HandleGetFilamentInfo(id, args);
         else if (strcmp(cmd, "SET_FILAMENT_INFO") == 0) HandleSetFilamentInfo(id, args);
+        else if (strcmp(cmd, "CALIBRATE") == 0) HandleCalibrate(id, args);
+        else if (strcmp(cmd, "SET_TOLERANCE") == 0) HandleSetTolerance(id, args);
         else {
             SendError(id, "UNKNOWN_CMD", cmd);
         }

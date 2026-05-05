@@ -137,9 +137,31 @@ void MMU_Logic::SetNeedToSave() {
 
 void MMU_Logic::LoadSettings() {
   flash_save_struct *ptr = (flash_save_struct *)(uintptr_t)(use_flash_addr);
-  if ((ptr->check == 0x40614061) && (ptr->version == data_save.version)) {
-    __builtin_memcpy(&data_save, ptr, sizeof(data_save));
-  } else {
+  bool need_defaults = true;
+
+  if (ptr->check == 0x40614061) {
+    if (ptr->version == data_save.version) {
+      __builtin_memcpy(&data_save, ptr, sizeof(data_save));
+      need_defaults = false;
+    } else if (ptr->version == 6) {
+      __builtin_memcpy(&data_save, ptr, sizeof(data_save) - sizeof(float)); // copy v6
+      data_save.version = 7;
+      data_save.pressure_tolerance = 0.05f;
+      SetNeedToSave();
+      need_defaults = false;
+    } else if (ptr->version == 5) {
+      __builtin_memcpy(&data_save, ptr, sizeof(data_save) - sizeof(float)*5); // copy v5
+      data_save.version = 7;
+      for (int i = 0; i < 4; i++) {
+        data_save.pressure_zero[i] = 1.65f;
+      }
+      data_save.pressure_tolerance = 0.05f;
+      SetNeedToSave();
+      need_defaults = false;
+    }
+  }
+
+  if (need_defaults) {
     // Default constants - set all 4 filaments to PLA defaults
     for (int i = 0; i < 4; i++) {
       data_save.filament[i].SetID(""); // Clear RFID
@@ -151,9 +173,11 @@ void MMU_Logic::LoadSettings() {
       data_save.filament[i].color_R = 0xFF;
       data_save.filament[i].color_G = 0xFF;
       data_save.filament[i].color_B = 0xFF;
+      data_save.pressure_zero[i] = 1.65f;
     }
+    data_save.pressure_tolerance = 0.05f;
     data_save.boot_mode = 1; // Default to Klipper
-    data_save.version = 5;
+    data_save.version = 7;
     data_save.check = 0x40614061;
     SetNeedToSave();
   }
@@ -217,9 +241,10 @@ void MMU_Logic::MC_PULL_ONLINE_read() {
     }
 
     // Pressure
-    if (MC_PULL_stu_raw[i] > PULL_voltage_up)
+    float zero = data_save.pressure_zero[i];
+    if (MC_PULL_stu_raw[i] > zero + 0.20f)
       MC_PULL_stu[i] = 1;
-    else if (MC_PULL_stu_raw[i] < PULL_voltage_down)
+    else if (MC_PULL_stu_raw[i] < zero - 0.20f)
       MC_PULL_stu[i] = -1;
     else
       MC_PULL_stu[i] = 0;
@@ -321,13 +346,10 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
     if (Assist_send_filament[CHx] && is_two) {
       if (MC_ONLINE_key_stu[CHx] == 2)
         x = -m.dir * 666;
-      else if (MC_ONLINE_key_stu[CHx] == 1) {
-        // Timer logic omitted/simplified
-      }
     } else {
       if (MC_ONLINE_key_stu[CHx] != 0 && MC_PULL_stu[CHx] != 0) {
         x = pid_sign *
-            m.PID_pressure.Calculate(MC_PULL_stu_raw[CHx] - 1.65f, time_E);
+            m.PID_pressure.Calculate(MC_PULL_stu_raw[CHx] - data_save.pressure_zero[CHx], time_E);
       } else {
         x = 0;
         m.PID_pressure.Clear();
@@ -353,16 +375,18 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
     float pid_sign = m.dir * (pid_invert ? -1.0f : 1.0f);
 
     if (m.motion == filament_motion_enum::pressure_ctrl_in_use) {
+      float zero = data_save.pressure_zero[CHx];
+      float tol = data_save.pressure_tolerance;
       if (pull_state_old) {
-        if (MC_PULL_stu_raw[CHx] < 1.55f)
+        if (MC_PULL_stu_raw[CHx] < zero - (tol * 2.0f))
           pull_state_old = false;
       } else {
-        if (MC_PULL_stu_raw[CHx] < 1.65f)
-          x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], 1.65f, time_E,
+        if (MC_PULL_stu_raw[CHx] < zero - tol)
+          x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], zero - tol, time_E,
                                         pressure_control_enum::less_pressure,
                                         pid_sign);
-        else if (MC_PULL_stu_raw[CHx] > 1.7f)
-          x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], 1.7f, time_E,
+        else if (MC_PULL_stu_raw[CHx] > zero + tol)
+          x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], zero + tol, time_E,
                                         pressure_control_enum::over_pressure,
                                         pid_sign);
       }
@@ -374,7 +398,7 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       }
       if (m.motion == filament_motion_enum::send) {
         if (device_type_addr == BambuBus_AMS_lite) {
-          if (MC_PULL_stu_raw[CHx] < 1.7f)
+          if (MC_PULL_stu_raw[CHx] < data_save.pressure_zero[CHx] + 0.05f)
             speed_set = MOTOR_SPEED_AMS_LITE_SEND;
           else
             speed_set = 0;
@@ -480,6 +504,7 @@ void MMU_Logic::motor_motion_switch() {
 
         if (filament_now_position[num] == filament_loading) {
           float pressure = MC_PULL_stu_raw[num];
+          float zero = data_save.pressure_zero[num];
 
           bool dist_done = false;
           if (unload_target_dist[num] > 0) {
@@ -487,7 +512,7 @@ void MMU_Logic::motor_motion_switch() {
               dist_done = true;
           }
 
-          if (pressure > PULL_voltage_up) {
+          if (pressure > zero + 0.20f) {
             filament_now_position[num] = filament_using;
             pull_state_old = true;
             motors[num].SetMotion(filament_motion_enum::pressure_ctrl_in_use);
@@ -495,7 +520,7 @@ void MMU_Logic::motor_motion_switch() {
             filament_now_position[num] = filament_idle;
             motors[num].SetMotion(filament_motion_enum::pressure_ctrl_idle);
             is_backing_out = false;
-          } else if (pressure > 1.70f) {
+          } else if (pressure > zero + 0.05f) {
             motors[num].SetMotion(filament_motion_enum::slow_send);
           } else {
             motors[num].SetMotion(filament_motion_enum::send);
@@ -760,7 +785,7 @@ void MMU_Logic::SetAutoFeed(int lane, bool enable) {
   if (enable) {
     motors[lane].SetMotion(filament_motion_enum::pressure_ctrl_in_use);
   } else {
-    motors[lane].SetMotion(filament_motion_enum::stop);
+    motors[lane].SetMotion(filament_motion_enum::pressure_ctrl_idle);
     filament_now_position[lane] = filament_idle;
   }
 }
@@ -791,3 +816,52 @@ int MMU_Logic::GetCurrentFilamentIndex() {
 }
 
 uint16_t MMU_Logic::GetDeviceType() { return device_type_addr; }
+
+float MMU_Logic::GetPressureZero(int lane) {
+  if (lane < 0 || lane >= 4) return 1.65f;
+  return data_save.pressure_zero[lane];
+}
+
+CalibrateResult MMU_Logic::CalibratePressure(int lane) {
+  CalibrateResult res;
+  res.ok = true;
+  res.error_msg = nullptr;
+  res.value = 0.0f;
+
+  if (lane < -1 || lane >= 4) {
+    res.ok = false;
+    res.error_msg = "Invalid lane";
+    return res;
+  }
+
+  bool saved = false;
+
+  if (lane == -1) {
+    // Calibrate all empty lanes
+    for (int i = 0; i < 4; i++) {
+      if (_hal->GetFilamentPresence(i)) continue; // Skip busy lanes
+      
+      float raw = _hal->GetPressureReading(i);
+      data_save.pressure_zero[i] = raw;
+      saved = true;
+    }
+  } else {
+    // Calibrate specific lane
+    if (_hal->GetFilamentPresence(lane)) {
+      res.ok = false;
+      res.error_msg = "Lane is busy with filament";
+      return res;
+    }
+    
+    float raw = _hal->GetPressureReading(lane);
+    data_save.pressure_zero[lane] = raw;
+    res.value = raw;
+    saved = true;
+  }
+
+  if (saved) {
+    SetNeedToSave();
+  }
+
+  return res;
+}

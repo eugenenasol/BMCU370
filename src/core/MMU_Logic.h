@@ -118,14 +118,22 @@ struct alignas(4) flash_save_struct
     int BambuBus_now_filament_num = 0;
     uint8_t filament_use_flag = 0x00;
     uint32_t boot_mode = 1; // Default Klipper
-    uint32_t version = 5; 
+    uint32_t version = 7; 
     uint32_t check = 0x40614061;
+    float pressure_zero[4];
+    float pressure_tolerance;
 };
 
 struct Motion_control_save_struct {
     uint32_t check;
     int Motion_control_dir[4]; 
     uint8_t padding[64]; 
+};
+
+struct CalibrateResult {
+    bool ok;
+    float value;
+    const char* error_msg;
 };
 
 // --- MMU Logic Class ---
@@ -145,6 +153,7 @@ public:
     void StartUnloadFilament(int tray, int length_mm = -1);
     void SetAutoFeed(int lane, bool enable);
     void SetCurrentFilamentIndex(int index);
+    CalibrateResult CalibratePressure(int lane);
     
     // Klipper Primitives
     void MoveAxis(int axis, float dist_mm, float speed);
@@ -156,6 +165,9 @@ public:
     FilamentState& GetFilament(int index);
     int GetCurrentFilamentIndex();
     uint16_t GetDeviceType();
+    float GetPressureZero(int lane);
+    float GetPressureTolerance() { return data_save.pressure_tolerance; }
+    void SetPressureTolerance(float tol) { data_save.pressure_tolerance = tol; }
     
     // Persistence
     void SaveSettings();
