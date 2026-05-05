@@ -5,7 +5,7 @@
 #define MOTOR_INVERT_CH1 true
 #define MOTOR_INVERT_CH2 true
 #define MOTOR_INVERT_CH3 true
-#define MOTOR_INVERT_CH4 true
+#define MOTOR_INVERT_CH4 false
 
 #define MOTOR_PID_INVERT_CH1 false
 #define MOTOR_PID_INVERT_CH2 false
@@ -144,13 +144,15 @@ void MMU_Logic::LoadSettings() {
       __builtin_memcpy(&data_save, ptr, sizeof(data_save));
       need_defaults = false;
     } else if (ptr->version == 6) {
-      __builtin_memcpy(&data_save, ptr, sizeof(data_save) - sizeof(float)); // copy v6
+      __builtin_memcpy(&data_save, ptr,
+                       sizeof(data_save) - sizeof(float)); // copy v6
       data_save.version = 7;
       data_save.pressure_tolerance = 0.05f;
       SetNeedToSave();
       need_defaults = false;
     } else if (ptr->version == 5) {
-      __builtin_memcpy(&data_save, ptr, sizeof(data_save) - sizeof(float)*5); // copy v5
+      __builtin_memcpy(&data_save, ptr,
+                       sizeof(data_save) - sizeof(float) * 5); // copy v5
       data_save.version = 7;
       for (int i = 0; i < 4; i++) {
         data_save.pressure_zero[i] = 1.65f;
@@ -343,7 +345,8 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
     // Slider always active: no filament sensor guard
     if (MC_PULL_stu[CHx] != 0) {
       x = pid_sign *
-          m.PID_pressure.Calculate(MC_PULL_stu_raw[CHx] - data_save.pressure_zero[CHx], time_E);
+          m.PID_pressure.Calculate(
+              MC_PULL_stu_raw[CHx] - data_save.pressure_zero[CHx], time_E);
     } else {
       x = 0;
       m.PID_pressure.Clear();
@@ -375,13 +378,13 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
           pull_state_old = false;
       } else {
         if (MC_PULL_stu_raw[CHx] < zero - tol)
-          x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], zero - tol, time_E,
-                                        pressure_control_enum::less_pressure,
-                                        pid_sign);
+          x = m.CalculatePressureOutput(
+              MC_PULL_stu_raw[CHx], zero - tol, time_E,
+              pressure_control_enum::less_pressure, pid_sign);
         else if (MC_PULL_stu_raw[CHx] > zero + tol)
-          x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], zero + tol, time_E,
-                                        pressure_control_enum::over_pressure,
-                                        pid_sign);
+          x = m.CalculatePressureOutput(
+              MC_PULL_stu_raw[CHx], zero + tol, time_E,
+              pressure_control_enum::over_pressure, pid_sign);
       }
     } else {
       if (m.motion == filament_motion_enum::stop) {
@@ -811,7 +814,8 @@ int MMU_Logic::GetCurrentFilamentIndex() {
 uint16_t MMU_Logic::GetDeviceType() { return device_type_addr; }
 
 float MMU_Logic::GetPressureZero(int lane) {
-  if (lane < 0 || lane >= 4) return 1.65f;
+  if (lane < 0 || lane >= 4)
+    return 1.65f;
   return data_save.pressure_zero[lane];
 }
 
@@ -832,8 +836,9 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
   if (lane == -1) {
     // Calibrate all empty lanes
     for (int i = 0; i < 4; i++) {
-      if (_hal->GetFilamentPresence(i)) continue; // Skip busy lanes
-      
+      if (_hal->GetFilamentPresence(i))
+        continue; // Skip busy lanes
+
       float raw = _hal->GetPressureReading(i);
       data_save.pressure_zero[i] = raw;
       saved = true;
@@ -845,7 +850,7 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
       res.error_msg = "Lane is busy with filament";
       return res;
     }
-    
+
     float raw = _hal->GetPressureReading(lane);
     data_save.pressure_zero[lane] = raw;
     res.value = raw;
