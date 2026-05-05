@@ -42,6 +42,7 @@ DMA_InitTypeDef Bambubus_DMA_InitStructure;
 /* DEVELOPMENT STATE: FUNCTIONAL - DO NOT MODIFY */
 namespace Hardware {
     static volatile bool uart_tx_busy = false; // Tracks full TX lifecycle (including DE pin)
+    static bool klipper_mode = false; // When true, DE stays HIGH (RS485 RX disabled for TTL)
 
     /* DEVELOPMENT STATE: FUNCTIONAL */
     /**
@@ -159,6 +160,10 @@ namespace Hardware {
         GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
         GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
         GPIO_Init(GPIOA, &GPIO_InitStructure);
+
+        klipper_mode = isKlipper;
+        // Start in RX mode (DE LOW) for both Klipper and BambuBus.
+        // RS485 transceiver: DE LOW = receiver enabled, transmitter disabled.
         GPIOA->BCR = GPIO_Pin_12;
 
         if (isKlipper) {
@@ -231,8 +236,8 @@ namespace Hardware {
         if (sr & USART_FLAG_TC)
         {
             USART_ClearITPendingBit(USART1, USART_IT_TC);
-            GPIOA->BCR = GPIO_Pin_12; // Disable DE
-            uart_tx_busy = false;     // Full transmission cycle complete
+            GPIOA->BCR = GPIO_Pin_12; // Return to RX mode (DE LOW)
+            uart_tx_busy = false;
         }
     }
 

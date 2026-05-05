@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "MMU_Defs.h"
 
-#include <string.h>
+
 
 // --- Shared Data Structures ---
 
@@ -20,17 +20,17 @@ struct FilamentInfo {
     // Default constructor - zero initialize all fields
     FilamentInfo() : color_R(0), color_G(0), color_B(0), color_A(0), 
                      temperature_min(0), temperature_max(0) {
-        memset(ID, 0, sizeof(ID));
-        memset(name, 0, sizeof(name));
+        __builtin_memset(ID, 0, sizeof(ID));
+        __builtin_memset(name, 0, sizeof(name));
     }
     
     // Helper accessors
     void SetID(const char* new_id) {
-        strncpy(ID, new_id, sizeof(ID)-1);
+        __builtin_strncpy(ID, new_id, sizeof(ID)-1);
         ID[sizeof(ID)-1] = 0;
     }
     void SetName(const char* new_name) {
-        strncpy(name, new_name, sizeof(name)-1);
+        __builtin_strncpy(name, new_name, sizeof(name)-1);
         name[sizeof(name)-1] = 0;
     }
 };

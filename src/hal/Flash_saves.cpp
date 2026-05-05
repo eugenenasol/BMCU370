@@ -29,6 +29,7 @@
  * @date 2025-12-27
  */
 #include "Flash_saves.h"
+#include "ch32v20x_flash.h"
 
 /* Global define */
 typedef enum

@@ -30,9 +30,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
+
+
 
 namespace LiteJSON {
 
@@ -142,7 +141,7 @@ public:
 class LiteValue {
 public:
     LiteValue() : _type(ValueType::Null) {
-        memset(&_data, 0, sizeof(_data));
+        __builtin_memset(&_data, 0, sizeof(_data));
     }
     
     // Internal constructors for serialization traversals

@@ -18,8 +18,8 @@
  */
 #pragma once
 
-#include <Arduino.h>
-#include "ch32v20x_flash.h"
+#include <stdint.h>
+
 
 /// CH32V203 Flash page size (4KB)
 #define FLASH_PAGE_SIZE 4096

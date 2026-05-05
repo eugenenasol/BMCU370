@@ -3,11 +3,11 @@
 * This file implements the Klipper JSON protocol which is currently in a testing state.
 */
 #include "KlipperCLI.h"
-#include "I_MMU_Transport.h"
-#include "MMU_Logic.h"
-#include "UnitState.h"
-#include "LiteJSON.h"
-#include "Hardware.h"
+#include "../interfaces/I_MMU_Transport.h"
+#include "../core/MMU_Logic.h"
+#include "../core/UnitState.h"
+#include "../libs/LiteJSON.h"
+#include "../hal/Hardware.h"
 #include <Arduino.h>
 #include <string.h>
 #include <ctype.h>
@@ -360,21 +360,17 @@ namespace KlipperCLI {
     void ProcessPacket(char* json_str) {
         // Guard against null or empty input
         if (!json_str || json_str[0] == '\0') {
-            const char* err = "{\"ok\":false,\"msg\":\"JSON Parse Error\",\"error\":\"Empty packet\"}\n";
-            if (_transport) _transport->Write((const uint8_t*)err, strlen(err));
-            return;
+            return; // Silently ignore empty packets
         }
         
-        // ASCII Guard: DISCARD packets with non-printable or high-bit binary chars
-        for (int i = 0; json_str[i] != '\0'; i++) {
-            unsigned char c = (unsigned char)json_str[i];
-            if ((c < 32 && c != '\t' && c != '\r' && c != '\n') || c > 126) {
-                WaitTX();
-                const char* err = "{\"ok\":false,\"msg\":\"JSON Parse Error\",\"error\":\"Binary garbage detected\"}\n";
-                if (_transport) _transport->Write((const uint8_t*)err, strlen(err));
-                return;
-            }
+        // RS485 noise recovery: find first '{' in the received data.
+        // RS485 transceiver startup noise corrupts the first few bytes
+        // of each frame, so we skip any garbage before the JSON object.
+        char* json_start = strchr(json_str, '{');
+        if (!json_start) {
+            return; // No JSON start found — discard (pure noise)
         }
+        json_str = json_start; // Parse from '{' onwards
         
         if (_mmu) _mmu->UpdateConnectivity(true);
         
@@ -428,30 +424,27 @@ namespace KlipperCLI {
     void Run() {
         if (!_transport) return;
         
-        // Poll transport for incoming bytes and process packets immediately
-        int bytes_to_read = 64; // Limit per run to avoid stalling main loop
+        int bytes_to_read = 64; 
         while (_transport->Available() > 0 && bytes_to_read-- > 0) {
             int b = _transport->Read();
             if (b < 0) break;
             
+            // Noise filter: drop non-printable/invalid bytes
+            if (b != '\r' && b != '\n' && (b < 32 || b > 126)) {
+                continue; 
+            }
+            
             if (b == '\n' || b == '\r') {
-                if (b == '\n' && last_was_cr) {
-                    // Skip \n if it follows \r
-                    last_was_cr = false;
-                    continue;
+                if (rx_idx > 0) {
+                    rx_buffer[rx_idx] = '\0';
+                    last_activity_time = millis();
+                    ProcessPacket(rx_buffer);
                 }
-                last_was_cr = (b == '\r');
-                
-                rx_buffer[rx_idx] = '\0';
-                last_activity_time = millis(); // Update activity timestamp for smart save timing
-                ProcessPacket(rx_buffer);
                 rx_idx = 0;
             } else {
-                last_was_cr = false;
                 if (rx_idx < (int)sizeof(rx_buffer) - 1) {
                     rx_buffer[rx_idx++] = (char)b;
                 } else {
-                    // Buffer overflow - discard and reset
                     rx_idx = 0; 
                 }
             }

@@ -22,6 +22,8 @@
 #include "LiteJSON.h"
 #include <ctype.h>
 #include <math.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 namespace LiteJSON {
 
@@ -49,7 +51,7 @@ void LiteValue::set(const char* val) {
         return;
     }
     _type = ValueType::String;
-    strncpy(_data.s, val, MAX_STRING_LEN - 1);
+    __builtin_strncpy(_data.s, val, MAX_STRING_LEN - 1);
     _data.s[MAX_STRING_LEN - 1] = '\0';
 }
 
@@ -172,7 +174,7 @@ bool LiteArray::add(const char* val) {
     if (_size >= MAX_ARRAY_SIZE) return false;
     _elements[_size].type = ValueType::String;
     if (val) {
-        strncpy(_elements[_size].str, val, MAX_STRING_LEN - 1);
+        __builtin_strncpy(_elements[_size].str, val, MAX_STRING_LEN - 1);
         _elements[_size].str[MAX_STRING_LEN - 1] = '\0';
     } else {
         _elements[_size].str[0] = '\0';
@@ -277,14 +279,14 @@ int LiteArray::serialize(char* buf, size_t bufLen) const {
 LiteValue& LiteObject::operator[](const char* key) {
     // Search for existing key
     for (int i = 0; i < _count; i++) {
-        if (strcmp(_pairs[i].key, key) == 0) {
+        if (__builtin_strcmp(_pairs[i].key, key) == 0) {
             return _pairs[i].value;
         }
     }
     
     // Create new key if space available
     if (_count < MAX_KEYS) {
-        strncpy(_pairs[_count].key, key, 31);
+        __builtin_strncpy(_pairs[_count].key, key, 31);
         _pairs[_count].key[31] = '\0';
         _pairs[_count].value = LiteValue();
         return _pairs[_count++].value;
@@ -297,7 +299,7 @@ LiteValue& LiteObject::operator[](const char* key) {
 
 const LiteValue& LiteObject::operator[](const char* key) const {
     for (int i = 0; i < _count; i++) {
-        if (strcmp(_pairs[i].key, key) == 0) {
+        if (__builtin_strcmp(_pairs[i].key, key) == 0) {
             return _pairs[i].value;
         }
     }
@@ -306,7 +308,7 @@ const LiteValue& LiteObject::operator[](const char* key) const {
 
 bool LiteObject::containsKey(const char* key) const {
     for (int i = 0; i < _count; i++) {
-        if (strcmp(_pairs[i].key, key) == 0) {
+        if (__builtin_strcmp(_pairs[i].key, key) == 0) {
             return true;
         }
     }
@@ -483,19 +485,19 @@ const char* LiteDoc::parseValue(const char* p, LiteValue& val, int depth) {
     if (!*p) return p;
     
     // Null
-    if (strncmp(p, "null", 4) == 0) {
+    if (__builtin_strncmp(p, "null", 4) == 0) {
         val.setNull();
         return p + 4;
     }
     
     // Boolean true
-    if (strncmp(p, "true", 4) == 0) {
+    if (__builtin_strncmp(p, "true", 4) == 0) {
         val.set(true);
         return p + 4;
     }
     
     // Boolean false  
-    if (strncmp(p, "false", 5) == 0) {
+    if (__builtin_strncmp(p, "false", 5) == 0) {
         val.set(false);
         return p + 5;
     }

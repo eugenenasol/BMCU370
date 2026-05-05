@@ -1,10 +1,11 @@
 #pragma once
 
 #include <stdint.h>
-#include <math.h>
+#include "../interfaces/I_MMU_Hardware.h"
 #include "MMU_Defs.h"
-#include "UnitState.h" // For FilamentState and FilamentInfo
-#include "I_MMU_Hardware.h"
+#include "UnitState.h"
+
+class I_MMU_Hardware;
 
 // --- Internal Configuration Constants ---
 // (Could be moved to a config file)
@@ -204,7 +205,7 @@ private:
     void motor_motion_switch();
     void MC_PULL_ONLINE_read();
     void AS5600_Update(float time_E);
-    bool Prepare_For_filament_Pull_Back(float_t OUT_filament_meters);
+    bool Prepare_For_filament_Pull_Back(float OUT_filament_meters);
     void UpdateLEDStatus(int channel);
     void RunMotorChannel(int channel, float time_E);
     void LoadSettings();
