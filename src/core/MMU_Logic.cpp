@@ -98,6 +98,7 @@ void MMU_Logic::Init() {
     if (invert)
       d = -d;
     motors[i].dir = (float)d;
+    motors[i].SetMotion(filament_motion_enum::pressure_ctrl_idle);
 
     last_total_distance[i] = data_save.filament[i].meters;
   }
