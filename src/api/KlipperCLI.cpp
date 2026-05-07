@@ -448,15 +448,16 @@ namespace KlipperCLI {
          SendOk(id);
     }
 
-    void HandleSetGain(int id, JsonObject args) {
-         if (!_mmu) return;
-         if(!args["value"].isFloat() && !args["value"].isInt()) {
-             SendError(id, "BAD_ARGS", "Missing value float"); 
-             return;
-         }
-         float val = args["value"];
-         _mmu->SetPressureGain(val);
-         SendOk(id);
+    void HandleSetGain(int id, LiteObject& args) {
+        float gain = args["value"] | 250.0f;
+        _mmu->SetPressureGain(gain);
+        SendOk(id);
+    }
+
+    void HandleSetBoost(int id, LiteObject& args) {
+        float pwm = args["value"] | 50.0f;
+        _mmu->SetPressureMinPWM(pwm);
+        SendOk(id);
     }
 
     void ProcessPacket(char* json_str) {
@@ -512,8 +513,9 @@ namespace KlipperCLI {
         else if (strcmp(cmd, "GET_FILAMENT_INFO") == 0) HandleGetFilamentInfo(id, args);
         else if (strcmp(cmd, "SET_FILAMENT_INFO") == 0) HandleSetFilamentInfo(id, args);
         else if (strcmp(cmd, "CALIBRATE") == 0) HandleCalibrate(id, args);
-        else if (strcmp(cmd, "SET_TOLERANCE") == 0) HandleSetTolerance(id, args);
+        else if (strcmp(cmd, "SET_TOLERANCE") == 0 || strcmp(cmd, "SET_PRESSURE_TOLERANCE") == 0) HandleSetTolerance(id, args);
         else if (strcmp(cmd, "SET_PRESSURE_GAIN") == 0) HandleSetGain(id, args);
+        else if (strcmp(cmd, "SET_PRESSURE_MIN_PWM") == 0 || strcmp(cmd, "SET_PRESSURE_BOOST") == 0) HandleSetBoost(id, args);
         else if (strcmp(cmd, "TEST_MOTOR") == 0) HandleTestMotor(id, args);
         else {
             SendError(id, "UNKNOWN_CMD", cmd);

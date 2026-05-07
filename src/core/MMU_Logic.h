@@ -116,7 +116,7 @@ public:
   float CalculatePressureOutput(float current_pressure, float control_voltage,
                                 float time_E,
                                 pressure_control_enum control_type, float sign,
-                                float gain);
+                                float gain, float min_pwm);
 
   // Main Run requires logic context (sensors).
   // We will separate logic: MMU_Logic updates Motors.
@@ -140,11 +140,12 @@ struct alignas(4) flash_save_struct {
   int BambuBus_now_filament_num = 0;
   uint8_t filament_use_flag = 0x00;
   uint32_t boot_mode = 1; // Default Klipper
-  uint32_t version = 9;
+  uint32_t version = 10;
   uint32_t check = 0x40614061;
   float pressure_zero[4];
   float pressure_tolerance;
   float pressure_gain;
+  float pressure_min_pwm;
 };
 
 struct Motion_control_save_struct {
@@ -209,6 +210,7 @@ public:
   float GetPressureTolerance() { return data_save.pressure_tolerance; }
   void SetPressureTolerance(float tol);
   void SetPressureGain(float gain);
+  void SetPressureMinPWM(float pwm);
 
   // Persistence
   void SaveSettings();

@@ -9,7 +9,7 @@
 float MotorChannel::CalculatePressureOutput(float current_pressure,
                                             float control_voltage, float time_E,
                                             pressure_control_enum control_type,
-                                            float sign, float gain) {
+                                            float sign, float gain, float min_pwm) {
   float x = 0;
   switch (control_type) {
   case pressure_control_enum::all:
@@ -28,9 +28,9 @@ float MotorChannel::CalculatePressureOutput(float current_pressure,
     break;
   }
   if (x > 0) {
-    x = 50.0f + (x * x / gain);
+    x = min_pwm + x;
   } else if (x < 0) {
-    x = -50.0f - (x * x / gain);
+    x = -min_pwm + x;
   } else {
     x = 0;
   }
@@ -133,19 +133,17 @@ void MMU_Logic::LoadSettings() {
     if (ptr->version == data_save.version) {
       __builtin_memcpy(&data_save, ptr, sizeof(data_save));
       need_defaults = false;
-    } else if (ptr->version == 7 || ptr->version == 8) {
-      __builtin_memcpy(&data_save, ptr, sizeof(data_save) - sizeof(float));
-      data_save.version = 9;
-      data_save.pressure_gain = 250.0f;
-      data_save.pressure_tolerance = 0.03f;
-      SetNeedToSave();
-      need_defaults = false;
-    } else if (ptr->version == 6) {
-      __builtin_memcpy(&data_save, ptr,
-                       sizeof(data_save) - sizeof(float) * 2); // copy v6
-      data_save.version = 9;
-      data_save.pressure_tolerance = 0.03f;
-      data_save.pressure_gain = 250.0f;
+    } else if (ptr->version >= 5 && ptr->version <= 9) {
+      // Migrate v5-v9 to v10
+      size_t copy_size = (ptr->version >= 9) ? sizeof(data_save) - sizeof(float) : sizeof(data_save) - sizeof(float)*3;
+      __builtin_memcpy(&data_save, ptr, copy_size);
+      
+      if (ptr->version < 9) {
+        data_save.pressure_gain = 250.0f;
+        data_save.pressure_tolerance = 0.03f;
+      }
+      data_save.pressure_min_pwm = 50.0f;
+      data_save.version = 10;
       SetNeedToSave();
       need_defaults = false;
     } else if (ptr->version == 5) {
@@ -327,6 +325,9 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       x = -pid_sign *
           m.PID_pressure.Calculate(
               data_save.pressure_zero[CHx] - MC_PULL_stu_raw[CHx], time_E);
+
+      if (x > 0) x += data_save.pressure_min_pwm;
+      else if (x < 0) x -= data_save.pressure_min_pwm;
     } else {
       x = 0;
       m.PID_pressure.Clear();
@@ -365,12 +366,12 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
           x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], zero - tol,
                                         time_E,
                                         pressure_control_enum::less_pressure,
-                                        -pid_sign, data_save.pressure_gain);
+                                        -pid_sign, data_save.pressure_gain, data_save.pressure_min_pwm);
         else if (MC_PULL_stu_raw[CHx] > zero + tol)
           x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], zero + tol,
                                         time_E,
                                         pressure_control_enum::over_pressure,
-                                        -pid_sign, data_save.pressure_gain);
+                                        -pid_sign, data_save.pressure_gain, data_save.pressure_min_pwm);
       }
     } else {
       if (m.motion == filament_motion_enum::stop) {
@@ -672,7 +673,7 @@ void MMU_Logic::Run() {
 void MMU_Logic::MC_PULL_ONLINE_read() {
   for (int i = 0; i < 4; i++) {
     float raw_p = _hal->GetPressureReading(i);
-    pressure_filtered[i] = (raw_p * 0.2f) + (pressure_filtered[i] * 0.8f);
+    pressure_filtered[i] = (raw_p * 0.4f) + (pressure_filtered[i] * 0.6f);
     MC_PULL_stu_raw[i] = pressure_filtered[i];
 
     float raw_o = _hal->GetPresenceVoltage(i);
@@ -937,6 +938,11 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
 
 void MMU_Logic::SetPressureGain(float gain) {
   data_save.pressure_gain = gain;
+  SetNeedToSave();
+}
+
+void MMU_Logic::SetPressureMinPWM(float pwm) {
+  data_save.pressure_min_pwm = pwm;
   SetNeedToSave();
 }
 
