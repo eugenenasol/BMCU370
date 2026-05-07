@@ -1,23 +1,9 @@
 #include "MMU_Logic.h"
 #include "../hal/Flash_saves.h"
-
-// Hardware Config Macros (Ideally in config)
-#define MOTOR_INVERT_CH1 true
-#define MOTOR_INVERT_CH2 true
-#define MOTOR_INVERT_CH3 true
-#define MOTOR_INVERT_CH4 false
-
-#define MOTOR_PID_INVERT_CH1 false
-#define MOTOR_PID_INVERT_CH2 false
-#define MOTOR_PID_INVERT_CH3 false
-#define MOTOR_PID_INVERT_CH4 true
+#include "../hal/Hardware.h"
 
 #define AS5600_PI 3.1415926535897932384626433832795
 
-// Unit Info
-#define DEVICE_MODEL "BMCU370"
-#define DEVICE_VERSION "00.00.05.00"
-#define DEVICE_SERIAL "00000000000000"
 
 // --- MotorChannel Helper Implementation ---
 
@@ -28,18 +14,17 @@ float MotorChannel::CalculatePressureOutput(float current_pressure,
   float x = 0;
   switch (control_type) {
   case pressure_control_enum::all:
-    x = sign *
-        PID_pressure.Calculate(current_pressure - control_voltage, time_E);
+    x = sign * PID_pressure.Calculate(control_voltage - current_pressure, time_E);
     break;
   case pressure_control_enum::less_pressure:
     if (current_pressure < control_voltage)
       x = sign *
-          PID_pressure.Calculate(current_pressure - control_voltage, time_E);
+          PID_pressure.Calculate(control_voltage - current_pressure, time_E);
     break;
   case pressure_control_enum::over_pressure:
     if (current_pressure > control_voltage)
       x = sign *
-          PID_pressure.Calculate(current_pressure - control_voltage, time_E);
+          PID_pressure.Calculate(control_voltage - current_pressure, time_E);
     break;
   }
   if (x > 0) {
@@ -72,6 +57,9 @@ MMU_Logic::MMU_Logic(I_MMU_Hardware *hal) : _hal(hal) {
     as5600_distance_save[i] = 0;
     unload_target_dist[i] = -1;
     unload_start_meters[i] = 0;
+    diag_active[i] = false;
+    diag_pwm[i] = 0;
+    diag_end_time[i] = 0;
   }
   pull_state_old = false;
   is_backing_out = false;
@@ -89,9 +77,7 @@ void MMU_Logic::Init() {
 
   // Setup Motor Directions based on Config
   for (int i = 0; i < 4; i++) {
-    int d = mc_save.Motion_control_dir[i];
-    if (d == 0)
-      d = 1;
+    int d = 1; // Always start with default direction, ignoring stale flash data
 
     bool invert = false;
     switch (i) {
@@ -191,69 +177,7 @@ void MMU_Logic::LoadSettings() {
   }
 }
 
-void MMU_Logic::MC_PULL_ONLINE_read() {
-  for (int i = 0; i < 4; i++) {
-    MC_PULL_stu_raw[i] = _hal->GetPressureReading(i);
-    // Note: HAL GetPressureReading returns raw voltage?
-    // Our HAL implementation calling `ADC_GetValues` returns voltage float.
-    // Correct.
 
-    // Filament Presence?
-    // HAL `GetFilamentPresence` returns bool.
-    // But logic relies on `MC_ONLINE_key_stu_raw` float for thresholds (AMS
-    // Lite vs AMS). AND `MC_ONLINE_key_stu` int state (0, 1, 2, 3). Since
-    // `I_MMU_Hardware` abstracts presence, `GetFilamentPresence` should return
-    // simple presence? BUT Logic has complex "Two" logic (is_two = true). If we
-    // want to keep logic identical, we need raw voltage from HAL. But HAL
-    // `GetPressureReading` gives 1 value. Filament Presence sensor is another
-    // channel. HAL implementation of `GetFilamentPresence` logic seemed simple.
-
-    // For faithful refactor: I need raw values. But Interface has abstractions.
-    // I will assume HAL handles "Presence" binary for now?
-    // No, `MC_ONLINE_key_stu` has states 0, 1, 2, 3 (trip states).
-    // The Logic calculates these states from RAW voltage.
-    // So I really need `GetFilamentSensorVoltage(i)`.
-    // The current interface `GetFilamentPresence` returns bool.
-    // This is a loss of fidelity for the refactor.
-    // I will add `GetRawSensorVoltage(type, lane)` to HAL?
-    // Or just let `GetFilamentPresence` return bool and simplify the logic to
-    // just Online/Offline? "is_two" logic was relevant for AMS vs AMS Lite
-    // sensor types. If we choose Klipper Mode, we likely just care about
-    // Present/Not Present. But `MC_ONLINE_key_stu` states are used in
-    // `motor_motion_switch`. "if (MC_ONLINE_key_stu[num] == 1 ||
-    // MC_ONLINE_key_stu[num] == 3)" -> Has Filament.
-
-    // I will implement a workaround:
-    // Use `_hal->GetFilamentPresence` to determine 0 or 1.
-    // If true -> 1. If false -> 0.
-    // Ignore 2/3 states (Trip) for now unless critical.
-    // AMS Lite uses trip states for "Buffer"?
-    // Let's assume standard toggle.
-
-    bool present = _hal->GetFilamentPresence(i);
-    MC_ONLINE_key_stu[i] = present ? 1 : 0;
-
-    // Sync Status
-    if (MC_ONLINE_key_stu[i] != 0) {
-      if (data_save.filament[i].status == AMS_filament_status::offline) {
-        data_save.filament[i].status = AMS_filament_status::online;
-      }
-    } else {
-      data_save.filament[i].status = AMS_filament_status::offline;
-    }
-
-    // Pressure
-    float zero = data_save.pressure_zero[i];
-    if (MC_PULL_stu_raw[i] > zero + 0.20f)
-      MC_PULL_stu[i] = 1;
-    else if (MC_PULL_stu_raw[i] < zero - 0.20f)
-      MC_PULL_stu[i] = -1;
-    else
-      MC_PULL_stu[i] = 0;
-
-    data_save.filament[i].pressure = (uint16_t)(MC_PULL_stu_raw[i] * 1000.0f);
-  }
-}
 
 void MMU_Logic::AS5600_Update(float time_E) {
   // HAL provides polling.
@@ -278,6 +202,7 @@ void MMU_Logic::AS5600_Update(float time_E) {
 
     float speedx = dist_E / (time_E > 0 ? time_E : 0.001f);
     speed_as5600[i] = speedx;
+    as5600_delta_mm[i] = dist_E;
 
     data_save.filament[i].meters += dist_E / 1000.0f;
   }
@@ -306,8 +231,19 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
 void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
   MotorChannel &m = motors[CHx];
 
+  // Diagnostic Override
+  if (diag_active[CHx]) {
+    if (_hal->GetTimeMS() < diag_end_time[CHx]) {
+      _hal->SetMotorPower(CHx, diag_pwm[CHx]);
+      return;
+    } else {
+      diag_active[CHx] = false;
+      _hal->SetMotorPower(CHx, 0);
+    }
+  }
+
   // Distance Accumulation
-  float dist_step = __builtin_fabsf(speed_as5600[CHx] * time_E);
+  float dist_step = __builtin_fabsf(as5600_delta_mm[CHx]);
   if (is_backing_out) {
     last_total_distance[CHx] += dist_step;
   }
@@ -344,9 +280,9 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
 
     // Slider always active: no filament sensor guard
     if (MC_PULL_stu[CHx] != 0) {
-      x = pid_sign *
+      x = -pid_sign *
           m.PID_pressure.Calculate(
-              MC_PULL_stu_raw[CHx] - data_save.pressure_zero[CHx], time_E);
+              data_save.pressure_zero[CHx] - MC_PULL_stu_raw[CHx], time_E);
     } else {
       x = 0;
       m.PID_pressure.Clear();
@@ -373,18 +309,22 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
     if (m.motion == filament_motion_enum::pressure_ctrl_in_use) {
       float zero = data_save.pressure_zero[CHx];
       float tol = data_save.pressure_tolerance;
-      if (pull_state_old) {
-        if (MC_PULL_stu_raw[CHx] < zero - (tol * 2.0f))
+      
+      // Auto-Feed logic: Maintain tension
+      // We clear pull_state_old when tension drops below threshold
+      if (pull_state_old && MC_PULL_stu_raw[CHx] < zero - (tol * 0.5f)) {
           pull_state_old = false;
-      } else {
+      }
+
+      if (!pull_state_old) {
         if (MC_PULL_stu_raw[CHx] < zero - tol)
           x = m.CalculatePressureOutput(
               MC_PULL_stu_raw[CHx], zero - tol, time_E,
-              pressure_control_enum::less_pressure, pid_sign);
+              pressure_control_enum::less_pressure, -pid_sign);
         else if (MC_PULL_stu_raw[CHx] > zero + tol)
           x = m.CalculatePressureOutput(
               MC_PULL_stu_raw[CHx], zero + tol, time_E,
-              pressure_control_enum::over_pressure, pid_sign);
+              pressure_control_enum::over_pressure, -pid_sign);
       }
     } else {
       if (m.motion == filament_motion_enum::stop) {
@@ -408,7 +348,28 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       if (m.motion == filament_motion_enum::velocity_control)
         speed_set = m.target_velocity;
 
-      x = pid_sign * m.PID_speed.Calculate(now_speed - speed_set, time_E);
+      // Smooth Acceleration (Ramping)
+      float accel_limit = 1000.0f * time_E; // 1000 mm/s^2
+      if (m.current_velocity_set < speed_set) {
+          m.current_velocity_set += accel_limit;
+          if (m.current_velocity_set > speed_set) m.current_velocity_set = speed_set;
+      } else if (m.current_velocity_set > speed_set) {
+          m.current_velocity_set -= accel_limit;
+          if (m.current_velocity_set < speed_set) m.current_velocity_set = speed_set;
+      }
+
+      x = pid_sign * m.PID_speed.Calculate(now_speed - m.current_velocity_set, time_E);
+
+      // Stall Detection
+      if (__builtin_fabsf(x) > 900 && __builtin_fabsf(now_speed) < 5.0f) {
+          if (m.stall_timer == 0) m.stall_timer = _hal->GetTimeMS();
+          if (_hal->GetTimeMS() - m.stall_timer > 500) {
+              m.SetMotion(filament_motion_enum::stop);
+              x = 0;
+          }
+      } else {
+          m.stall_timer = 0;
+      }
     }
   } else {
     x = 0;
@@ -488,6 +449,10 @@ void MMU_Logic::motor_motion_switch() {
 
         if (done) {
           motors[num].SetMotion(filament_motion_enum::stop);
+          motors[num].PID_speed.Clear();
+          motors[num].accumulated_distance = 0;
+          motors[num].current_velocity_set = 0;
+          motors[num].stall_timer = 0;
           filament_now_position[num] = filament_idle;
           is_backing_out = false;
           return;
@@ -495,7 +460,7 @@ void MMU_Logic::motor_motion_switch() {
         return;
       }
 
-      if (MC_ONLINE_key_stu[num] == 1 || MC_ONLINE_key_stu[num] == 3) {
+      if (MC_ONLINE_key_stu[num] > 0) {
         AMS_filament_motion current_motion = data_save.filament[num].motion_set;
 
         if (filament_now_position[num] == filament_loading) {
@@ -568,16 +533,18 @@ void MMU_Logic::motor_motion_switch() {
         case AMS_filament_motion::idle:
           filament_now_position[num] = filament_idle;
           motors[num].SetMotion(filament_motion_enum::pressure_ctrl_idle);
-          // LED status handled per-channel by UpdateLEDStatus in
-          // RunMotorChannel
           break;
         }
-      } else if (MC_ONLINE_key_stu[num] == 0) {
-        filament_now_position[num] = filament_idle;
-        motors[num].SetMotion(filament_motion_enum::pressure_ctrl_idle);
       }
     }
   }
+
+  /* 
+  // Auto-Load trigger disabled per user request
+  if (filament_now_position[num] == filament_idle && MC_ONLINE_key_stu[num] > 0) {
+      StartLoadFilament(num, 0); 
+  }
+  */
 }
 
 void MMU_Logic::Run() {
@@ -614,6 +581,8 @@ void MMU_Logic::Run() {
     RunMotorChannel(i, time_E);
   }
 
+  _hal->LED_Show();
+
   // System LED Debug Flash
   static uint64_t last_led_update = 0;
   if (now - last_led_update > 1000) {
@@ -648,6 +617,41 @@ void MMU_Logic::Run() {
   // So I DO need to call Show.
   // I will add `MainLoop()` to `I_MMU_Hardware`? Or just `UpdateLEDs()`.
   // I'll ignore for now, and fix later. (LEDs might not update).
+}
+
+void MMU_Logic::MC_PULL_ONLINE_read() {
+  for (int i = 0; i < 4; i++) {
+    float raw_p = _hal->GetPressureReading(i);
+    MC_PULL_stu_raw[i] = raw_p;
+    
+    float raw_o = _hal->GetPresenceVoltage(i);
+    MC_ONLINE_key_stu_raw[i] = raw_o;
+
+    bool present = _hal->GetFilamentPresence(i);
+    MC_ONLINE_key_stu[i] = present ? 1 : 0;
+
+    // Sync Filament Status for Bambu Protocol
+    if (MC_ONLINE_key_stu[i] != 0) {
+      if (data_save.filament[i].status == AMS_filament_status::offline) {
+        data_save.filament[i].status = AMS_filament_status::online;
+      }
+    } else {
+      if (data_save.filament[i].status == AMS_filament_status::online) {
+        data_save.filament[i].status = AMS_filament_status::offline;
+      }
+    }
+
+    // Pressure State Calculation (-1, 0, 1)
+    float zero = data_save.pressure_zero[i];
+    if (raw_p > zero + 0.20f)
+      MC_PULL_stu[i] = 1;
+    else if (raw_p < zero - 0.20f)
+      MC_PULL_stu[i] = -1;
+    else
+      MC_PULL_stu[i] = 0;
+
+    data_save.filament[i].pressure = (uint16_t)(raw_p * 1000.0f);
+  }
 }
 
 // User Actions
@@ -805,6 +809,20 @@ FilamentState &MMU_Logic::GetFilament(int index) {
   if (index < 0 || index >= 4)
     return data_save.filament[0];
   return data_save.filament[index];
+}
+
+void MMU_Logic::DiagnosticMotorControl(int lane, int pwm, uint32_t duration_ms) {
+  if (lane < 0 || lane >= 4) return;
+  diag_pwm[lane] = pwm;
+  diag_end_time[lane] = _hal->GetTimeMS() + duration_ms;
+  diag_active[lane] = true;
+}
+
+float MMU_Logic::GetLanePIDOutput(int lane) {
+  // This is tricky because the output is calculated inside RunMotorChannel and sent to HAL.
+  // We don't store the last output in MMU_Logic.
+  // For now return 0 or we could add a member to track it.
+  return 0; 
 }
 
 int MMU_Logic::GetCurrentFilamentIndex() {

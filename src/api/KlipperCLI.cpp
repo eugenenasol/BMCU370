@@ -23,6 +23,7 @@ namespace KlipperCLI {
     static JsonDocument doc;
     static char global_json_buf[1024]; // Shared buffer for all responses
     static uint64_t last_activity_time = 0; // Track last serial activity for smart save timing
+    static uint64_t last_diag_broadcast = 0;
 
     // Response Helper
     void WaitTX() {
@@ -71,7 +72,7 @@ namespace KlipperCLI {
         doc["result"] = "ok";
         
         LiteObject& t = doc["telemetry"].makeObject();
-        t["version"] = "00.00.07.00"; 
+        t["version"] = DEVICE_VERSION; 
         t["uptime"] = (int)millis();
         
         SendResponse(doc);
@@ -144,10 +145,14 @@ namespace KlipperCLI {
              const char* sign = (meters_f < 0 && m_int == 0) ? "-" : "";
 
              int n = snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, 
-                "{\"id\":%d,\"present\":%s,\"motion\":\"%s\",\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"pressure_zero\":%d.%03d,\"rfid\":\"%s\",\"name\":\"%s\",\"temp_min\":%d,\"temp_max\":%d,\"color\":[%d,%d,%d,%d]}",
-                i, 
-                (sensors & (1<<i)) ? "true" : "false",
-                m_str, sign, m_int, m_dec, p_int, p_dec, p_zero_int, p_zero_dec, safe_id, safe_name, f.temperature_min, f.temperature_max, f.color_R, f.color_G, f.color_B, f.color_A);
+                 "{\"id\":%d,\"present\":%s,\"motion\":\"%s\",\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"raw_pressure\":%d.%03d,\"raw_online\":%d.%03d,\"raw_enc\":%d,\"pressure_zero\":%d.%03d,\"rfid\":\"%s\",\"name\":\"%s\",\"temp_min\":%d,\"temp_max\":%d,\"color\":[%d,%d,%d,%d]}",
+                 i, 
+                 (sensors & (1<<i)) ? "true" : "false",
+                 m_str, sign, m_int, m_dec, p_int, p_dec, 
+                 (int)_mmu->GetRawPressure(i), (int)(_mmu->GetRawPressure(i) * 1000) % 1000,
+                 (int)_mmu->GetRawOnline(i), (int)(_mmu->GetRawOnline(i) * 1000) % 1000,
+                 (int)_mmu->GetRawEncoder(i),
+                p_zero_int, p_zero_dec, safe_id, safe_name, f.temperature_min, f.temperature_max, f.color_R, f.color_G, f.color_B, f.color_A);
              
              if (n > 0) {
                  if (offset + n >= (int)sizeof(global_json_buf)) {
@@ -269,6 +274,22 @@ namespace KlipperCLI {
         bool enable = args["enable"];
         _mmu->SetAutoFeed(lane, enable);
         SendOk(id);
+    }
+
+    void HandleTestMotor(int id, JsonObject args) {
+        if (!_mmu) return;
+        if(!args["lane"].isInt() || !args["pwm"].isInt()) {
+             SendError(id, "BAD_ARGS", "Missing lane or pwm");
+             return;
+        }
+        int lane = args["lane"];
+        int pwm = args["pwm"];
+        uint32_t duration = args["duration"].isInt() ? (uint32_t)args["duration"].asInt() : 1000;
+        
+        if(lane < 0 || lane >= 4) { SendError(id, "BAD_LANE", "0-3 only"); return; }
+        
+        _mmu->DiagnosticMotorControl(lane, pwm, duration);
+        SendOk(id, "STARTED", "Diagnostic started");
     }
 
     void HandleGetFilamentInfo(int id, JsonObject args) {
@@ -481,6 +502,7 @@ namespace KlipperCLI {
         else if (strcmp(cmd, "SET_FILAMENT_INFO") == 0) HandleSetFilamentInfo(id, args);
         else if (strcmp(cmd, "CALIBRATE") == 0) HandleCalibrate(id, args);
         else if (strcmp(cmd, "SET_TOLERANCE") == 0) HandleSetTolerance(id, args);
+        else if (strcmp(cmd, "TEST_MOTOR") == 0) HandleTestMotor(id, args);
         else {
             SendError(id, "UNKNOWN_CMD", cmd);
         }
@@ -492,7 +514,7 @@ namespace KlipperCLI {
         const char* startup = "{\"event\":\"STARTUP\",\"msg\":\"KlipperCLI Ready\"}\r\n";
         if (_transport) _transport->Write((const uint8_t*)startup, strlen(startup));
     }
-
+    
     void Run() {
         if (!_transport) return;
         
@@ -518,6 +540,24 @@ namespace KlipperCLI {
                     rx_buffer[rx_idx++] = (char)b;
                 } else {
                     rx_idx = 0; 
+                }
+            }
+        }
+        
+        // Diagnostic Broadcasting (every 100ms)
+        if (millis() - last_diag_broadcast > 100) {
+            last_diag_broadcast = millis();
+            for (int i = 0; i < 4; i++) {
+                if (_mmu->IsDiagnosticActive(i)) {
+                    int enc = _mmu->GetRawEncoder(i);
+                    float press = _mmu->GetRawPressure(i);
+                    int p_int = (int)press;
+                    int p_dec = (int)(press * 1000) % 1000;
+                    
+                    int len = snprintf(global_json_buf, sizeof(global_json_buf),
+                        "{\"event\":\"DIAG_DATA\",\"lane\":%d,\"raw_enc\":%d,\"raw_pressure\":%d.%03d}\r\n",
+                        i, enc, p_int, p_dec);
+                    if (_transport) _transport->Write((const uint8_t*)global_json_buf, len);
                 }
             }
         }

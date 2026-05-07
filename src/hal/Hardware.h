@@ -1,15 +1,16 @@
 #pragma once
 
+#include "ch32v20x.h"
 #include <Arduino.h>
 #include <stdint.h>
-#include "ch32v20x.h"
+
 
 // Motor Direction Configuration
 // Set to true to invert the motor direction for the specific channel
 #define MOTOR_INVERT_CH1 false
 #define MOTOR_INVERT_CH2 false
 #define MOTOR_INVERT_CH3 false
-#define MOTOR_INVERT_CH4 true
+#define MOTOR_INVERT_CH4 false
 
 // Motor Speed Configuration
 // #define MOTOR_SPEED_SEND 50
@@ -18,9 +19,9 @@
 // #define MOTOR_SPEED_PULL 50
 
 // PID Inversion Configuration
-#define MOTOR_PID_INVERT_CH1 true
-#define MOTOR_PID_INVERT_CH2 true
-#define MOTOR_PID_INVERT_CH3 true
+#define MOTOR_PID_INVERT_CH1 false
+#define MOTOR_PID_INVERT_CH2 false
+#define MOTOR_PID_INVERT_CH3 false
 #define MOTOR_PID_INVERT_CH4 false
 
 // Device Info
@@ -37,46 +38,47 @@
 // Hardware Abstraction Layer
 
 /*
-* DEVELOPMENT STATE: FUNCTIONAL
-* The entire hardware layer (LEDs, motors, pressure, encoder, etc) is PROVEN FUNCTIONAL.
-* DO NOT MODIFY under any circumstances.
-*/
+ * DEVELOPMENT STATE: FUNCTIONAL
+ * The entire hardware layer (LEDs, motors, pressure, encoder, etc) is PROVEN
+ * FUNCTIONAL. DO NOT MODIFY under any circumstances.
+ */
 namespace Hardware {
 
-    void InitBase();
-    /* DEVELOPMENT STATE: TESTING */
-    void InitUART(bool isKlipper);
+void InitBase();
+/* DEVELOPMENT STATE: TESTING */
+void InitUART(bool isKlipper);
 
-    // Time
-    void DelayUS(uint32_t us);
-    void DelayMS(uint32_t ms);
-    uint64_t GetTime(); // Returns time in ms or similar, based on time64.h
-    
-    // UART
-    // void UART_Init(); // Removed, use InitUART(bool)
-    void UART_SetRxCallback(void (*callback)(uint8_t));
-    /* DEVELOPMENT STATE: TESTING */
-    void UART_Send(const uint8_t *data, uint16_t length);
-    void UART_SendByte(uint8_t data);
-    bool UART_IsBusy();
+// Time
+void DelayUS(uint32_t us);
+void DelayMS(uint32_t ms);
+uint64_t GetTime(); // Returns time in ms or similar, based on time64.h
 
-    // ADC
-    void ADC_Init();
-    float* ADC_GetValues(); // Returns pointer to 8 floats
+// UART
+// void UART_Init(); // Removed, use InitUART(bool)
+void UART_SetRxCallback(void (*callback)(uint8_t));
+/* DEVELOPMENT STATE: TESTING */
+void UART_Send(const uint8_t *data, uint16_t length);
+void UART_SendByte(uint8_t data);
+bool UART_IsBusy();
 
-    // PWM / Motor
-    void PWM_Init();
-    void PWM_Set(uint8_t channel, int pwm_value);
+// ADC
+void ADC_Init();
+float *ADC_GetValues(); // Returns pointer to 8 floats
 
-    // LED
-    void LED_Init();
-    void LED_SetColor(uint8_t channel, int led_idx, uint8_t r, uint8_t g, uint8_t b);
-    void LED_Show();
-    void LED_SetBrightness(uint8_t brightness);
+// PWM / Motor
+void PWM_Init();
+void PWM_Set(uint8_t channel, int pwm_value);
 
-    // Watchdog
-    void Watchdog_Disable();
-    
-    // System
-    void System_Init(); // Configures RCC, GPIO remap, etc.
-}
+// LED
+void LED_Init();
+void LED_SetColor(uint8_t channel, int led_idx, uint8_t r, uint8_t g,
+                  uint8_t b);
+void LED_Show();
+void LED_SetBrightness(uint8_t brightness);
+
+// Watchdog
+void Watchdog_Disable();
+
+// System
+void System_Init(); // Configures RCC, GPIO remap, etc.
+} // namespace Hardware

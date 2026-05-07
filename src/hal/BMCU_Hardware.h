@@ -19,8 +19,10 @@ public:
     // --- Sensors ---
     float GetPressureReading(int lane) override;
     bool GetFilamentPresence(int lane) override;
+    float GetPresenceVoltage(int lane) override;
     int32_t GetEncoderValue(int lane) override; 
 
     // --- User Feedback ---
     void SetLED(int lane, uint8_t r, uint8_t g, uint8_t b) override;
+    void LED_Show() override;
 };

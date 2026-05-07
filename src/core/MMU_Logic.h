@@ -64,11 +64,13 @@ public:
     uint64_t motor_stop_time = 0;
     MOTOR_PID PID_speed; 
     MOTOR_PID PID_pressure; 
-    float pwm_zero = 500;
+    float pwm_zero = 700.0f;
     float dir = 0; 
     float target_velocity = 0; 
     float target_distance = 0; 
     float accumulated_distance = 0; 
+    float current_velocity_set = 0; // For smooth Ramping
+    uint32_t stall_timer = 0;      // For Stall Detection
     
     MotorChannel() : CHx(0) {} // Default
     MotorChannel(int ch) : CHx(ch) {
@@ -78,7 +80,7 @@ public:
     
     void Init(int ch) {
         CHx = ch;
-        PID_speed.Init(2, 20, 0);
+        PID_speed.Init(1.0f, 5.0f, 0);
         PID_pressure.Init(1500, 0, 0);
     }
 
@@ -87,6 +89,8 @@ public:
             motion = m;
             PID_speed.Clear();
             accumulated_distance = 0; 
+            current_velocity_set = 0;
+            stall_timer = 0;
         }
     }
     
@@ -161,6 +165,14 @@ public:
     uint16_t GetSensorState();  
     int GetLaneMotion(int lane);
     
+    // Diagnostic Tools
+    void DiagnosticMotorControl(int lane, int pwm, uint32_t duration_ms);
+    bool IsDiagnosticActive(int lane) { return (lane >= 0 && lane < 4) ? diag_active[lane] : false; }
+    int32_t GetRawEncoder(int lane) { return (lane >= 0 && lane < 4) ? as5600_distance_save[lane] : 0; }
+    float GetRawPressure(int lane) { return (lane >= 0 && lane < 4) ? MC_PULL_stu_raw[lane] : 0.0f; }
+    float GetRawOnline(int lane) { return (lane >= 0 && lane < 4) ? MC_ONLINE_key_stu_raw[lane] : 0.0f; }
+    float GetLanePIDOutput(int lane);
+    
     // Accessors (Replacement for UnitState)
     FilamentState& GetFilament(int index);
     int GetCurrentFilamentIndex();
@@ -185,6 +197,7 @@ private:
     
     // Sensor Cache
     float speed_as5600[4];
+    float as5600_delta_mm[4];
     float MC_PULL_stu_raw[4];
     int MC_PULL_stu[4];
     float MC_ONLINE_key_stu_raw[4];
@@ -205,6 +218,11 @@ private:
     bool is_connected;
     uint64_t last_heartbeat_time;
     uint16_t device_type_addr;
+    
+    // Diagnostic State
+    int diag_pwm[4];
+    uint64_t diag_end_time[4];
+    bool diag_active[4];
     
     // Constants
     const bool is_two = true; // AMS Lite logic

@@ -24,8 +24,7 @@ Adafruit_NeoPixel strip_channel[4] = {
 };
 Adafruit_NeoPixel strip_PD1(LED_PD1_NUM, PD1, NEO_GRB + NEO_KHZ800);
 
-// ADC Configuration
-int16_t ADC_Calibrattion_Val = 0;
+// ADC Configuration - Moved to namespace
 #define ADC_filter_n_pow 8
 constexpr int mypow(int a, int b) {
     int x = 1;
@@ -33,8 +32,6 @@ constexpr int mypow(int a, int b) {
     return x;
 }
 constexpr const int ADC_filter_n = mypow(2, ADC_filter_n_pow);
-uint16_t ADC_data[ADC_filter_n][8];
-float ADC_V[8];
 
 // DMA for UART
 DMA_InitTypeDef Bambubus_DMA_InitStructure;
@@ -43,6 +40,13 @@ DMA_InitTypeDef Bambubus_DMA_InitStructure;
 namespace Hardware {
     static volatile bool uart_tx_busy = false; // Tracks full TX lifecycle (including DE pin)
     static bool klipper_mode = false; // When true, DE stays HIGH (RS485 RX disabled for TTL)
+
+    // ADC State
+    static volatile uint16_t ADC_data[ADC_filter_n][8];
+    static float ADC_V[8];
+    static int ADC_Calibrattion_Val = 0;
+    static uint32_t last_dma_count = 0;
+    static uint64_t last_dma_change_time = 0;
 
     /* DEVELOPMENT STATE: FUNCTIONAL */
     /**
@@ -409,29 +413,45 @@ namespace Hardware {
         DelayMS(256); // Wait for buffer fill (ADC_filter_n = 256)
     }
 
-    /* DEVELOPMENT STATE: FUNCTIONAL */
-    /**
-     * @brief Get filtered ADC voltage values.
-     * 
-     * Calculates the average of the DMA buffer for each channel, converts to Voltage,
-     * and returns the array.
-     * 
-     * @return float* Pointer to array of 8 float voltages (0.0 - 3.3V).
-     */
+    // Cached values to avoid redundant calculations
+    static float ADC_V_cache[8] = {0};
+    static uint64_t last_calc_time = 0;
+
     float* ADC_GetValues() {
-        for (int i = 0; i < 8; i++) {
-            int data_sum = 0;
-            for (int j = 0; j < ADC_filter_n; j++) {
-                uint16_t val = ADC_data[j][i];
-                int sum = val + ADC_Calibrattion_Val;
-                if (sum < 0 || val == 0) ;
-                else if (sum > 4095 || val == 4095) data_sum += 4095;
-                else data_sum += sum;
-            }
-            data_sum >>= ADC_filter_n_pow;
-            ADC_V[i] = ((float)data_sum) / 4096 * 3.3;
+        uint64_t now = get_time64();
+        
+        // Watchdog: Restart ADC if DMA stops updating
+        uint32_t current_dma_count = DMA_GetCurrDataCounter(DMA1_Channel1);
+        if (current_dma_count != last_dma_count) {
+            last_dma_count = current_dma_count;
+            last_dma_change_time = now;
+        } else if (now - last_dma_change_time > 100) {
+            ADC_SoftwareStartConvCmd(ADC1, ENABLE);
+            last_dma_change_time = now;
         }
-        return ADC_V;
+
+        // Only recalculate averages if at least 1ms has passed (or first call)
+        // This dramatically reduces CPU load if called multiple times in a tight loop
+        if (now - last_calc_time >= 1 || last_calc_time == 0) {
+            for (int i = 0; i < 8; i++) {
+                int32_t data_sum = 0;
+                // Optimization: use local pointer to avoid repeated array indexing of volatile
+                volatile uint16_t* p_data = &ADC_data[0][i];
+                for (int j = 0; j < ADC_filter_n; j++) {
+                    int32_t val = *p_data;
+                    p_data += 8; // Jump to next sample for same channel
+                    int32_t sum = val + ADC_Calibrattion_Val;
+                    if (sum < 0) sum = 0;
+                    if (sum > 4095) sum = 4095;
+                    data_sum += sum;
+                }
+                data_sum >>= ADC_filter_n_pow;
+                ADC_V_cache[i] = ((float)data_sum) / 4096.0f * 3.3f;
+            }
+            last_calc_time = now;
+        }
+        
+        return ADC_V_cache;
     }
 
     // --- PWM ---

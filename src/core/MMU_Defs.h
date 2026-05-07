@@ -2,6 +2,11 @@
 
 #include <stdint.h>
 
+// Unit Info shared across modules
+#define DEVICE_MODEL "BMCU370"
+#define DEVICE_VERSION "00.00.08.00"
+#define DEVICE_SERIAL "00000000000000"
+
 // Filament Status
 enum class AMS_filament_status
 {

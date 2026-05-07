@@ -81,6 +81,14 @@ bool BMCU_Hardware::GetFilamentPresence(int lane) {
     return (v > 1.6f);
 }
 
+float BMCU_Hardware::GetPresenceVoltage(int lane) {
+    float *vals = Hardware::ADC_GetValues();
+    if (!vals) return 0.0f;
+    int idx = (3 - lane) * 2 + 1;
+    if (idx < 0 || idx > 7) return 0.0f;
+    return vals[idx];
+}
+
 int32_t BMCU_Hardware::GetEncoderValue(int lane) {
     HAL_AS5600.updata_angle(); // This updates ALL. Maybe inefficient to do per lane call?
     // But Interface implies per-lane query.
@@ -95,5 +103,8 @@ int32_t BMCU_Hardware::GetEncoderValue(int lane) {
 
 void BMCU_Hardware::SetLED(int lane, uint8_t r, uint8_t g, uint8_t b) {
     Hardware::LED_SetColor(lane, 0, r, g, b);
+}
+
+void BMCU_Hardware::LED_Show() {
     Hardware::LED_Show();
 }

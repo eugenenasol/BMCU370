@@ -46,6 +46,14 @@ public:
     virtual bool GetFilamentPresence(int lane) = 0;
     
     /**
+     * @brief Get Raw Filament Presence Voltage.
+     * 
+     * @param lane Lane index.
+     * @return float Voltage (0.0v to 3.3v).
+     */
+    virtual float GetPresenceVoltage(int lane) = 0;
+    
+    /**
      * @brief Update and Get Encoder Angle/Distance.
      * 
      * Depending on implementation, this might poll I2C or return cached value.
@@ -65,6 +73,13 @@ public:
      * @param b Blue (0-255).
      */
     virtual void SetLED(int lane, uint8_t r, uint8_t g, uint8_t b) = 0;
+    
+    /**
+     * @brief Update physical LED strip.
+     * 
+     * Pushes buffered color data to the hardware strip.
+     */
+    virtual void LED_Show() = 0;
     
     //=========================================================================
     // PERSISTENT STORAGE (Optional - defaults do nothing)
