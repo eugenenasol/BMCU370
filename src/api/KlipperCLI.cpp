@@ -448,6 +448,17 @@ namespace KlipperCLI {
          SendOk(id);
     }
 
+    void HandleSetGain(int id, JsonObject args) {
+         if (!_mmu) return;
+         if(!args["value"].isFloat() && !args["value"].isInt()) {
+             SendError(id, "BAD_ARGS", "Missing value float"); 
+             return;
+         }
+         float val = args["value"];
+         _mmu->SetPressureGain(val);
+         SendOk(id);
+    }
+
     void ProcessPacket(char* json_str) {
         // Guard against null or empty input
         if (!json_str || json_str[0] == '\0') {
@@ -502,6 +513,7 @@ namespace KlipperCLI {
         else if (strcmp(cmd, "SET_FILAMENT_INFO") == 0) HandleSetFilamentInfo(id, args);
         else if (strcmp(cmd, "CALIBRATE") == 0) HandleCalibrate(id, args);
         else if (strcmp(cmd, "SET_TOLERANCE") == 0) HandleSetTolerance(id, args);
+        else if (strcmp(cmd, "SET_PRESSURE_GAIN") == 0) HandleSetGain(id, args);
         else if (strcmp(cmd, "TEST_MOTOR") == 0) HandleTestMotor(id, args);
         else {
             SendError(id, "UNKNOWN_CMD", cmd);

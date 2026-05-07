@@ -4,17 +4,17 @@
 
 #define AS5600_PI 3.1415926535897932384626433832795
 
-
 // --- MotorChannel Helper Implementation ---
 
 float MotorChannel::CalculatePressureOutput(float current_pressure,
                                             float control_voltage, float time_E,
                                             pressure_control_enum control_type,
-                                            float sign) {
+                                            float sign, float gain) {
   float x = 0;
   switch (control_type) {
   case pressure_control_enum::all:
-    x = sign * PID_pressure.Calculate(control_voltage - current_pressure, time_E);
+    x = sign *
+        PID_pressure.Calculate(control_voltage - current_pressure, time_E);
     break;
   case pressure_control_enum::less_pressure:
     if (current_pressure < control_voltage)
@@ -28,9 +28,11 @@ float MotorChannel::CalculatePressureOutput(float current_pressure,
     break;
   }
   if (x > 0) {
-    x = x * x / 250.0f;
+    x = 50.0f + (x * x / gain);
+  } else if (x < 0) {
+    x = -50.0f - (x * x / gain);
   } else {
-    x = -x * x / 250.0f;
+    x = 0;
   }
   return x;
 }
@@ -60,6 +62,7 @@ MMU_Logic::MMU_Logic(I_MMU_Hardware *hal) : _hal(hal) {
     diag_active[i] = false;
     diag_pwm[i] = 0;
     diag_end_time[i] = 0;
+    pressure_filtered[i] = 1.65f;
   }
   pull_state_old = false;
   is_backing_out = false;
@@ -130,21 +133,30 @@ void MMU_Logic::LoadSettings() {
     if (ptr->version == data_save.version) {
       __builtin_memcpy(&data_save, ptr, sizeof(data_save));
       need_defaults = false;
+    } else if (ptr->version == 7 || ptr->version == 8) {
+      __builtin_memcpy(&data_save, ptr, sizeof(data_save) - sizeof(float));
+      data_save.version = 9;
+      data_save.pressure_gain = 250.0f;
+      data_save.pressure_tolerance = 0.03f;
+      SetNeedToSave();
+      need_defaults = false;
     } else if (ptr->version == 6) {
       __builtin_memcpy(&data_save, ptr,
-                       sizeof(data_save) - sizeof(float)); // copy v6
-      data_save.version = 7;
-      data_save.pressure_tolerance = 0.05f;
+                       sizeof(data_save) - sizeof(float) * 2); // copy v6
+      data_save.version = 9;
+      data_save.pressure_tolerance = 0.03f;
+      data_save.pressure_gain = 250.0f;
       SetNeedToSave();
       need_defaults = false;
     } else if (ptr->version == 5) {
       __builtin_memcpy(&data_save, ptr,
-                       sizeof(data_save) - sizeof(float) * 5); // copy v5
-      data_save.version = 7;
+                       sizeof(data_save) - sizeof(float) * 6); // copy v5
+      data_save.version = 9;
       for (int i = 0; i < 4; i++) {
         data_save.pressure_zero[i] = 1.65f;
       }
-      data_save.pressure_tolerance = 0.05f;
+      data_save.pressure_tolerance = 0.03f;
+      data_save.pressure_gain = 250.0f;
       SetNeedToSave();
       need_defaults = false;
     }
@@ -164,9 +176,10 @@ void MMU_Logic::LoadSettings() {
       data_save.filament[i].color_B = 0xFF;
       data_save.pressure_zero[i] = 1.65f;
     }
-    data_save.pressure_tolerance = 0.05f;
+    data_save.pressure_tolerance = 0.03f;
+    data_save.pressure_gain = 250.0f;
     data_save.boot_mode = 1; // Default to Klipper
-    data_save.version = 7;
+    data_save.version = 9;
     data_save.check = 0x40614061;
     SetNeedToSave();
   }
@@ -177,8 +190,6 @@ void MMU_Logic::LoadSettings() {
     __builtin_memcpy(&mc_save, mc_ptr, sizeof(mc_save));
   }
 }
-
-
 
 void MMU_Logic::AS5600_Update(float time_E) {
   // HAL provides polling.
@@ -210,6 +221,38 @@ void MMU_Logic::AS5600_Update(float time_E) {
 }
 
 void MMU_Logic::UpdateLEDStatus(int channel) {
+  MotorChannel &m = motors[channel];
+
+  // Advanced LED logic for Auto-Feed mode
+  if (m.motion == filament_motion_enum::pressure_ctrl_in_use) {
+    float zero = data_save.pressure_zero[channel];
+    float error = pressure_filtered[channel] - zero;
+    float abs_error = __builtin_fabsf(error);
+
+    int r = 0, g = 50, b = 0; // Dim Green when active
+
+    if (abs_error > 0.03f) {
+      // Brighten Green as pressure increases (up to 0.3V)
+      g = 50 + (int)((abs_error - 0.03f) * (205.0f / 0.27f));
+      if (g > 255)
+        g = 255;
+    }
+
+    // Mix Red/Blue if pushed/pulled beyond manual threshold (0.3V)
+    if (error > 0.30f)
+      r = (int)((error - 0.30f) * 1000.0f);
+    if (error < -0.30f)
+      b = (int)((-error - 0.30f) * 1000.0f);
+
+    if (r > 255)
+      r = 255;
+    if (b > 255)
+      b = 255;
+
+    _hal->SetLED(channel, r, g, b);
+    return;
+  }
+
   if (MC_PULL_stu[channel] == 1) {
     _hal->SetLED(channel, 255, 0, 0);
   } else if (MC_PULL_stu[channel] == -1) {
@@ -310,22 +353,24 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
     if (m.motion == filament_motion_enum::pressure_ctrl_in_use) {
       float zero = data_save.pressure_zero[CHx];
       float tol = data_save.pressure_tolerance;
-      
+
       // Auto-Feed logic: Maintain tension
       // We clear pull_state_old when tension drops below threshold
       if (pull_state_old && MC_PULL_stu_raw[CHx] < zero - (tol * 0.5f)) {
-          pull_state_old = false;
+        pull_state_old = false;
       }
 
       if (!pull_state_old) {
         if (MC_PULL_stu_raw[CHx] < zero - tol)
-          x = m.CalculatePressureOutput(
-              MC_PULL_stu_raw[CHx], zero - tol, time_E,
-              pressure_control_enum::less_pressure, -pid_sign);
+          x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], zero - tol,
+                                        time_E,
+                                        pressure_control_enum::less_pressure,
+                                        -pid_sign, data_save.pressure_gain);
         else if (MC_PULL_stu_raw[CHx] > zero + tol)
-          x = m.CalculatePressureOutput(
-              MC_PULL_stu_raw[CHx], zero + tol, time_E,
-              pressure_control_enum::over_pressure, -pid_sign);
+          x = m.CalculatePressureOutput(MC_PULL_stu_raw[CHx], zero + tol,
+                                        time_E,
+                                        pressure_control_enum::over_pressure,
+                                        -pid_sign, data_save.pressure_gain);
       }
     } else {
       if (m.motion == filament_motion_enum::stop) {
@@ -352,24 +397,28 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       // Smooth Acceleration (Ramping)
       float accel_limit = 1000.0f * time_E; // 1000 mm/s^2
       if (m.current_velocity_set < speed_set) {
-          m.current_velocity_set += accel_limit;
-          if (m.current_velocity_set > speed_set) m.current_velocity_set = speed_set;
+        m.current_velocity_set += accel_limit;
+        if (m.current_velocity_set > speed_set)
+          m.current_velocity_set = speed_set;
       } else if (m.current_velocity_set > speed_set) {
-          m.current_velocity_set -= accel_limit;
-          if (m.current_velocity_set < speed_set) m.current_velocity_set = speed_set;
+        m.current_velocity_set -= accel_limit;
+        if (m.current_velocity_set < speed_set)
+          m.current_velocity_set = speed_set;
       }
 
-      x = pid_sign * m.PID_speed.Calculate(now_speed - m.current_velocity_set, time_E);
+      x = pid_sign *
+          m.PID_speed.Calculate(now_speed - m.current_velocity_set, time_E);
 
       // Stall Detection
       if (__builtin_fabsf(x) > 900 && __builtin_fabsf(now_speed) < 5.0f) {
-          if (m.stall_timer == 0) m.stall_timer = _hal->GetTimeMS();
-          if (_hal->GetTimeMS() - m.stall_timer > 500) {
-              m.SetMotion(filament_motion_enum::stop);
-              x = 0;
-          }
+        if (m.stall_timer == 0)
+          m.stall_timer = _hal->GetTimeMS();
+        if (_hal->GetTimeMS() - m.stall_timer > 500) {
+          m.SetMotion(filament_motion_enum::stop);
+          x = 0;
+        }
       } else {
-          m.stall_timer = 0;
+        m.stall_timer = 0;
       }
     }
   } else {
@@ -540,10 +589,10 @@ void MMU_Logic::motor_motion_switch() {
     }
   }
 
-  /* 
+  /*
   // Auto-Load trigger disabled per user request
-  if (filament_now_position[num] == filament_idle && MC_ONLINE_key_stu[num] > 0) {
-      StartLoadFilament(num, 0); 
+  if (filament_now_position[num] == filament_idle && MC_ONLINE_key_stu[num] > 0)
+  { StartLoadFilament(num, 0);
   }
   */
 }
@@ -623,8 +672,9 @@ void MMU_Logic::Run() {
 void MMU_Logic::MC_PULL_ONLINE_read() {
   for (int i = 0; i < 4; i++) {
     float raw_p = _hal->GetPressureReading(i);
-    MC_PULL_stu_raw[i] = raw_p;
-    
+    pressure_filtered[i] = (raw_p * 0.2f) + (pressure_filtered[i] * 0.8f);
+    MC_PULL_stu_raw[i] = pressure_filtered[i];
+
     float raw_o = _hal->GetPresenceVoltage(i);
     MC_ONLINE_key_stu_raw[i] = raw_o;
 
@@ -642,11 +692,11 @@ void MMU_Logic::MC_PULL_ONLINE_read() {
       }
     }
 
-    // Pressure State Calculation (-1, 0, 1)
+    // Pressure State Calculation (-1, 0, 1) - Manual Mode Threshold (0.30V)
     float zero = data_save.pressure_zero[i];
-    if (raw_p > zero + 0.20f)
+    if (pressure_filtered[i] > zero + 0.30f)
       MC_PULL_stu[i] = 1;
-    else if (raw_p < zero - 0.20f)
+    else if (pressure_filtered[i] < zero - 0.30f)
       MC_PULL_stu[i] = -1;
     else
       MC_PULL_stu[i] = 0;
@@ -812,18 +862,20 @@ FilamentState &MMU_Logic::GetFilament(int index) {
   return data_save.filament[index];
 }
 
-void MMU_Logic::DiagnosticMotorControl(int lane, int pwm, uint32_t duration_ms) {
-  if (lane < 0 || lane >= 4) return;
+void MMU_Logic::DiagnosticMotorControl(int lane, int pwm,
+                                       uint32_t duration_ms) {
+  if (lane < 0 || lane >= 4)
+    return;
   diag_pwm[lane] = pwm;
   diag_end_time[lane] = _hal->GetTimeMS() + duration_ms;
   diag_active[lane] = true;
 }
 
 float MMU_Logic::GetLanePIDOutput(int lane) {
-  // This is tricky because the output is calculated inside RunMotorChannel and sent to HAL.
-  // We don't store the last output in MMU_Logic.
-  // For now return 0 or we could add a member to track it.
-  return 0; 
+  // This is tricky because the output is calculated inside RunMotorChannel and
+  // sent to HAL. We don't store the last output in MMU_Logic. For now return 0
+  // or we could add a member to track it.
+  return 0;
 }
 
 int MMU_Logic::GetCurrentFilamentIndex() {
@@ -881,4 +933,14 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
   }
 
   return res;
+}
+
+void MMU_Logic::SetPressureGain(float gain) {
+  data_save.pressure_gain = gain;
+  SetNeedToSave();
+}
+
+void MMU_Logic::SetPressureTolerance(float tol) {
+  data_save.pressure_tolerance = tol;
+  SetNeedToSave();
 }
