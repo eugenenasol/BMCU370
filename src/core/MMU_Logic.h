@@ -87,6 +87,7 @@ public:
   float accumulated_distance = 0;
   float current_velocity_set = 0;
   uint32_t stall_timer = 0;
+  bool SET_AUTO_FEED = false;
 
   MotorChannel() : CHx(0) {} // Default
   MotorChannel(int ch) : CHx(ch) {

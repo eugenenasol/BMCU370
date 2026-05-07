@@ -222,32 +222,45 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
   MotorChannel &m = motors[channel];
 
   // Advanced LED logic for Auto-Feed mode
-  if (m.motion == filament_motion_enum::pressure_ctrl_in_use) {
+  if (m.SET_AUTO_FEED || m.motion == filament_motion_enum::pressure_ctrl_in_use) {
+    // Standard rule: Nothing burns if no filament
+    if (MC_ONLINE_key_stu[channel] == 0) {
+      _hal->SetLED(channel, 0, 0, 0);
+      return;
+    }
+
     float zero = data_save.pressure_zero[channel];
     float error = pressure_filtered[channel] - zero;
     float abs_error = __builtin_fabsf(error);
+    float tol = data_save.pressure_tolerance;
 
-    int r = 0, g = 50, b = 0; // Dim Green when active
-
-    if (abs_error > 0.03f) {
-      // Brighten Green as pressure increases (up to 0.3V)
-      g = 50 + (int)((abs_error - 0.03f) * (205.0f / 0.27f));
-      if (g > 255)
-        g = 255;
+    // Region 3: Manual Zone (> 0.30V) - Static Red/Blue
+    if (error > 0.30f) {
+      _hal->SetLED(channel, 255, 0, 0);
+      return;
+    }
+    if (error < -0.30f) {
+      _hal->SetLED(channel, 0, 0, 255);
+      return;
     }
 
-    // Mix Red/Blue if pushed/pulled beyond manual threshold (0.3V)
-    if (error > 0.30f)
-      r = (int)((error - 0.30f) * 1000.0f);
-    if (error < -0.30f)
-      b = (int)((-error - 0.30f) * 1000.0f);
+    // Region 1: Neutral Zone (< tolerance) - Static Orange
+    if (abs_error < tol) {
+      _hal->SetLED(channel, 255, 80, 0);
+      return;
+    }
 
-    if (r > 255)
-      r = 255;
-    if (b > 255)
-      b = 255;
+    // Region 2: Work Zone (tolerance to 0.30V) - Orange Strobe
+    // freq: 1Hz (at tol) to 15Hz (at 0.30V)
+    float freq = 1.0f + (abs_error - tol) * (14.0f / (0.30f - tol));
+    uint32_t period_ms = (uint32_t)(1000.0f / freq);
+    bool blink_on = (_hal->GetTimeMS() / (period_ms / 2)) % 2 == 0;
 
-    _hal->SetLED(channel, r, g, b);
+    if (blink_on) {
+      _hal->SetLED(channel, 255, 80, 0);
+    } else {
+      _hal->SetLED(channel, 0, 0, 0);
+    }
     return;
   }
 
@@ -272,6 +285,13 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
 
 void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
   MotorChannel &m = motors[CHx];
+
+  // Auto-resume pressure control if enabled and idle
+  if (m.SET_AUTO_FEED &&
+      (m.motion == filament_motion_enum::stop ||
+       m.motion == filament_motion_enum::pressure_ctrl_idle)) {
+    m.SetMotion(filament_motion_enum::pressure_ctrl_in_use);
+  }
 
   // Diagnostic Override
   if (diag_active[CHx]) {
@@ -820,6 +840,7 @@ void MMU_Logic::MoveAxis(int axis, float dist_mm, float speed) {
 
 void MMU_Logic::StopAll() {
   for (int i = 0; i < 4; i++) {
+    motors[i].SET_AUTO_FEED = false;
     motors[i].SetMotion(filament_motion_enum::stop);
     filament_now_position[i] = filament_idle;
   }
@@ -834,11 +855,11 @@ void MMU_Logic::SetCurrentFilamentIndex(int index) {
 void MMU_Logic::SetAutoFeed(int lane, bool enable) {
   if (lane < 0 || lane >= 4)
     return;
+  motors[lane].SET_AUTO_FEED = enable;
   if (enable) {
     motors[lane].SetMotion(filament_motion_enum::pressure_ctrl_in_use);
   } else {
     motors[lane].SetMotion(filament_motion_enum::pressure_ctrl_idle);
-    filament_now_position[lane] = filament_idle;
   }
 }
 
