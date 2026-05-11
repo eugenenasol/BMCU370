@@ -9,7 +9,7 @@ class I_MMU_Hardware;
 
 // --- Internal Configuration Constants ---
 // (Could be moved to a config file)
-#define STRUCT_VERSION 13
+#define STRUCT_VERSION 14
 #define MOTOR_SPEED_SEND 1500
 #define MOTOR_SPEED_AMS_LITE_SEND 1000
 #define MOTOR_SPEED_SLOW_SEND 800

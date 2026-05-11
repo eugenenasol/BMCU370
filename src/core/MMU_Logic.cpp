@@ -139,20 +139,20 @@ void MMU_Logic::LoadSettings() {
         data_save.pressure_tolerance = 0.03f;
       }
       data_save.pressure_min_pwm = 50.0f;
-      data_save.version = 12;
-      data_save.pressure_gain = 3000.0f;
+      data_save.version = 13;
+      data_save.pressure_gain = 5000.0f;
       data_save.pressure_offset = -0.07f;
-      data_save.boost_threshold = 0.05f;
+      data_save.boost_threshold = 0.02f;
       data_save.boost_pwm = 350.0f;
       data_save.boost_time_ms = 50;
       data_save.retract_deadzone = 1.2f;
-      data_save.pressure_min_pwm = 100.0f;
+      data_save.pressure_min_pwm = 180.0f;
       data_save.pressure_tolerance = 0.015f;
-      data_save.move_p = 20.0f;
-      data_save.move_i = 50.0f;
+      data_save.move_p = 25.0f;
+      data_save.move_i = 80.0f;
       data_save.move_d = 0.0f;
-      data_save.move_pwm_zero = 150.0f;
-      data_save.version = 13;
+      data_save.move_pwm_zero = 200.0f;
+      data_save.version = 14;
       SetNeedToSave();
       need_defaults = false;
     } else if (ptr->version == 5) {
@@ -184,19 +184,19 @@ void MMU_Logic::LoadSettings() {
       data_save.pressure_zero[i] = 1.65f;
     }
     data_save.pressure_tolerance = 0.015f;
-    data_save.pressure_gain = 3000.0f;
+    data_save.pressure_gain = 5000.0f;
     data_save.pressure_offset = -0.07f;
-    data_save.boost_threshold = 0.05f;
+    data_save.boost_threshold = 0.02f;
     data_save.boost_pwm = 350.0f;
     data_save.boost_time_ms = 50;
     data_save.retract_deadzone = 1.2f;
-    data_save.pressure_min_pwm = 100.0f;
+    data_save.pressure_min_pwm = 180.0f;
     data_save.boot_mode = 1; // Default to Klipper
-    data_save.move_p = 20.0f;
-    data_save.move_i = 50.0f;
+    data_save.move_p = 25.0f;
+    data_save.move_i = 80.0f;
     data_save.move_d = 0.0f;
-    data_save.move_pwm_zero = 150.0f;
-    data_save.version = 13;
+    data_save.move_pwm_zero = 200.0f;
+    data_save.version = 14;
     data_save.check = 0x40614061;
     SetNeedToSave();
   }

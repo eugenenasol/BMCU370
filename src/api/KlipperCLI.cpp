@@ -552,9 +552,9 @@ namespace KlipperCLI {
     void HandleFeedToExtruder(int id, LiteObject& args) {
         if (!_mmu) return;
         int lane = args["lane"] | (args["LANE"] | -1);
-        float spd = args["speed"].isFloat() ? args["speed"] : (args["SPEED"].isFloat() ? args["SPEED"] : 15.0f);
-        float max = args["max_mm"].isFloat() ? args["max_mm"] : (args["MAX_MM"].isFloat() ? args["MAX_MM"] : 150.0f);
-        float pthr = args["pressure_thr"].isFloat() ? args["pressure_thr"] : (args["PRESSURE_THR"].isFloat() ? args["PRESSURE_THR"] : 0.15f);
+        float spd = args["speed"].isFloat() ? args["speed"] : (args["SPEED"].isFloat() ? args["SPEED"] : 30.0f);
+        float max = args["max_mm"].isFloat() ? args["max_mm"] : (args["MAX_MM"].isFloat() ? args["MAX_MM"] : 250.0f);
+        float pthr = args["pressure_thr"].isFloat() ? args["pressure_thr"] : (args["PRESSURE_THR"].isFloat() ? args["PRESSURE_THR"] : 0.20f);
         uint32_t stall = args["stall_ms"].isInt() ? (uint32_t)args["stall_ms"] : (args["STALL"].isInt() ? (uint32_t)args["STALL"] : 300);
 
         if (lane < 0 || lane >= 4) {
