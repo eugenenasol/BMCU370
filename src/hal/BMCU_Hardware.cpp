@@ -32,6 +32,10 @@ uint64_t BMCU_Hardware::GetTimeMS() {
     return Hardware::GetTime();
 }
 
+uint64_t BMCU_Hardware::GetTimeUS() {
+    return micros();
+}
+
 void BMCU_Hardware::DelayMS(uint32_t ms) {
     Hardware::DelayMS(ms);
 }
@@ -41,6 +45,14 @@ void BMCU_Hardware::WatchdogReset() {
 }
 
 void BMCU_Hardware::SetMotorPower(int lane, int pwm_val) {
+    bool invert = false;
+    switch(lane) {
+        case 0: invert = MOTOR_INVERT_CH1; break;
+        case 1: invert = MOTOR_INVERT_CH2; break;
+        case 2: invert = MOTOR_INVERT_CH3; break;
+        case 3: invert = MOTOR_INVERT_CH4; break;
+    }
+    if (invert) pwm_val = -pwm_val;
     Hardware::PWM_Set(lane, pwm_val);
 }
 

@@ -9,6 +9,7 @@ class I_MMU_Hardware;
 
 // --- Internal Configuration Constants ---
 // (Could be moved to a config file)
+#define STRUCT_VERSION 13
 #define MOTOR_SPEED_SEND 1500
 #define MOTOR_SPEED_AMS_LITE_SEND 1000
 #define MOTOR_SPEED_SLOW_SEND 800
@@ -67,10 +68,26 @@ enum class filament_motion_enum {
   pressure_ctrl_idle,
   pressure_ctrl_in_use,
   pressure_ctrl_on_use,
-  velocity_control
+  velocity_control,
+  feed_to_extruder
 };
 
-enum class pressure_control_enum { less_pressure, all, over_pressure };
+struct FeedToExtruderState {
+  bool active = false;
+  int lane = -1;
+  int cmd_id = 0;
+  float speed = 0.0f;
+  float max_mm = 0.0f;
+  float pressure_threshold = 0.0f;
+  uint32_t stall_ms = 300;
+  uint64_t start_ms = 0;
+  bool done = false;
+  enum class StopReason { none, stall, pressure, distance, timeout } reason =
+      StopReason::none;
+  float dist_moved = 0.0f;
+};
+
+enum class pressure_control_enum { less_pressure, all, over_pressure, reverse };
 
 // --- Motor Channel Class ---
 class MotorChannel {
@@ -78,6 +95,7 @@ public:
   int CHx;
   filament_motion_enum motion = filament_motion_enum::stop;
   uint64_t motor_stop_time = 0;
+  pressure_control_enum pressure_ctrl = pressure_control_enum::all;
   MOTOR_PID PID_speed;
   MOTOR_PID PID_pressure;
   float pwm_zero = 500;
@@ -88,6 +106,9 @@ public:
   float current_velocity_set = 0;
   uint32_t stall_timer = 0;
   bool SET_AUTO_FEED = false;
+  uint64_t boost_end_time = 0;
+  bool pull_state_old = false;
+  bool use_overflow = false;
 
   MotorChannel() : CHx(0) {} // Default
   MotorChannel(int ch) : CHx(ch) {
@@ -141,12 +162,21 @@ struct alignas(4) flash_save_struct {
   int BambuBus_now_filament_num = 0;
   uint8_t filament_use_flag = 0x00;
   uint32_t boot_mode = 1; // Default Klipper
-  uint32_t version = 10;
+  uint32_t version = 12;
   uint32_t check = 0x40614061;
   float pressure_zero[4];
   float pressure_tolerance;
   float pressure_gain;
   float pressure_min_pwm;
+  float pressure_offset;
+  float boost_threshold;
+  float boost_pwm;
+  uint32_t boost_time_ms;
+  float retract_deadzone;
+  float move_p;
+  float move_i;
+  float move_d;
+  float move_pwm_zero;
 };
 
 struct Motion_control_save_struct {
@@ -177,15 +207,26 @@ public:
                              float meters = -1.0f);
   void StartLoadFilament(int tray, int length_mm = -1);
   void StartUnloadFilament(int tray, int length_mm = -1);
-  void SetAutoFeed(int lane, bool enable);
+  void SetAutoFeed(int lane, bool enable, bool overflow = false);
   void SetCurrentFilamentIndex(int index);
   CalibrateResult CalibratePressure(int lane);
+
+  // FTE Command
+  using StopReason = FeedToExtruderState::StopReason;
+  void StartFeedToExtruder(int lane, float speed, float max_mm,
+                           float pressure_threshold, uint32_t stall_ms, int cmd_id);
+  StopReason GetFTEResult(float &dist_moved_mm);
+  void ClearFTEResult();
+  int GetFTECmdId() { return _fte.cmd_id; }
 
   // Klipper Primitives
   void MoveAxis(int axis, float dist_mm, float speed);
   void StopAll();
+
   uint16_t GetSensorState();
   int GetLaneMotion(int lane);
+  bool GetLaneAutoFeed(int lane) { return (lane >= 0 && lane < 4) ? motors[lane].SET_AUTO_FEED : false; }
+  bool GetLaneOverflow(int lane) { return (lane >= 0 && lane < 4) ? motors[lane].use_overflow : false; }
 
   // Diagnostic Tools
   void DiagnosticMotorControl(int lane, int pwm, uint32_t duration_ms);
@@ -212,10 +253,29 @@ public:
   void SetPressureTolerance(float tol);
   void SetPressureGain(float gain);
   void SetPressureMinPWM(float pwm);
+  void SetPressureOffset(float offset);
+  void SetBoostThreshold(float threshold);
+  void SetBoostPWM(float pwm);
+  void SetBoostTime(uint32_t ms);
+  void SetRetractDeadzone(float deadzone);
+
+  float GetPressureGain() { return data_save.pressure_gain; }
+  float GetPressureMinPWM() { return data_save.pressure_min_pwm; }
+  float GetMoveP() { return data_save.move_p; }
+  float GetMoveI() { return data_save.move_i; }
+  float GetMoveD() { return data_save.move_d; }
+  float GetMovePwmZero() { return data_save.move_pwm_zero; }
+  float GetPressureOffset() { return data_save.pressure_offset; }
+  float GetBoostThreshold() { return data_save.boost_threshold; }
+  float GetBoostPWM() { return data_save.boost_pwm; }
+  uint32_t GetBoostTime() { return data_save.boost_time_ms; }
+  float GetRetractDeadzone() { return data_save.retract_deadzone; }
 
   // Persistence
   void SaveSettings();
   void SetNeedToSave();
+  void SyncMovePID();
+  void SetMovePID(float p, float i, float d, float zero);
 
 private:
   I_MMU_Hardware *_hal;
@@ -224,6 +284,8 @@ private:
   flash_save_struct data_save;
   Motion_control_save_struct mc_save;
   MotorChannel motors[4];
+  FeedToExtruderState _fte;
+
 
   filament_now_position_enum filament_now_position[4];
 
@@ -237,7 +299,6 @@ private:
   float as5600_delta_mm[4];
 
   bool Assist_send_filament[4];
-  bool pull_state_old;
   bool is_backing_out;
   float last_total_distance[4];
   int32_t as5600_distance_save[4];

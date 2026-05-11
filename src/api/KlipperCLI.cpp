@@ -21,9 +21,12 @@ namespace KlipperCLI {
     static int rx_idx = 0;
     static bool last_was_cr = false;
     static JsonDocument doc;
-    static char global_json_buf[1024]; // Shared buffer for all responses
+    static char global_json_buf[2048]; // Shared buffer for all responses
     static uint64_t last_activity_time = 0; // Track last serial activity for smart save timing
     static uint64_t last_diag_broadcast = 0;
+    static uint64_t last_fte_check = 0;
+
+    const char* get_sign(float val) { return (val < 0) ? "-" : ""; }
 
     // Response Helper
     void WaitTX() {
@@ -99,6 +102,7 @@ namespace KlipperCLI {
                 case 3: m_str = "SlowFeed"; break;
                 case 5: m_str = "AutoFeed"; break; 
                 case 7: m_str = "VelCtrl"; break;
+                case 8: m_str = "FTE"; break;
                 default: m_str = "Idle"; break;
             }
             
@@ -145,10 +149,13 @@ namespace KlipperCLI {
              const char* sign = (meters_f < 0 && m_int == 0) ? "-" : "";
 
              int n = snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, 
-                 "{\"id\":%d,\"present\":%s,\"motion\":\"%s\",\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"raw_pressure\":%d.%03d,\"raw_online\":%d.%03d,\"raw_enc\":%d,\"pressure_zero\":%d.%03d,\"rfid\":\"%s\",\"name\":\"%s\",\"temp_min\":%d,\"temp_max\":%d,\"color\":[%d,%d,%d,%d]}",
+                 "{\"id\":%d,\"present\":%s,\"motion\":\"%s\",\"autofeed\":%s,\"overflow\":%s,\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"raw_pressure\":%d.%03d,\"raw_online\":%d.%03d,\"raw_enc\":%d,\"pressure_zero\":%d.%03d,\"rfid\":\"%s\",\"name\":\"%s\",\"temp_min\":%d,\"temp_max\":%d,\"color\":[%d,%d,%d,%d]}",
                  i, 
                  (sensors & (1<<i)) ? "true" : "false",
-                 m_str, sign, m_int, m_dec, p_int, p_dec, 
+                 m_str,
+                 _mmu->GetLaneAutoFeed(i) ? "true" : "false",
+                 _mmu->GetLaneOverflow(i) ? "true" : "false",
+                 sign, m_int, m_dec, p_int, p_dec, 
                  (int)_mmu->GetRawPressure(i), (int)(_mmu->GetRawPressure(i) * 1000) % 1000,
                  (int)_mmu->GetRawOnline(i), (int)(_mmu->GetRawOnline(i) * 1000) % 1000,
                  (int)_mmu->GetRawEncoder(i),
@@ -163,20 +170,50 @@ namespace KlipperCLI {
              }
          }
          
-         // Finalize manually built JSON with closing array and object
+         // Global Advanced Parameters
          float tol = _mmu->GetPressureTolerance();
-         int t_int = (int)tol;
-         int t_dec = (int)((tol - t_int) * 1000);
-         if(t_dec < 0) t_dec = -t_dec;
-         
-         int trailing = snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "],\"pressure_tolerance\":%d.%03d}\r\n", t_int, t_dec);
-         
-         if (trailing < 0 || offset + trailing >= (int)sizeof(global_json_buf)) {
-             SendError(id, "BUFFER_OVERFLOW", "Status too large");
-             return;
-         }
-         offset += trailing;
+         int tol_int = (int)__builtin_fabsf(tol);
+         int tol_dec = (int)((__builtin_fabsf(tol) - tol_int) * 1000);
 
+         float gain = _mmu->GetPressureGain();
+         int g_int = (int)__builtin_fabsf(gain);
+         int g_dec = (int)((__builtin_fabsf(gain) - g_int) * 10);
+
+         float offset_val = _mmu->GetPressureOffset();
+         int off_int = (int)__builtin_fabsf(offset_val);
+         int off_dec = (int)((__builtin_fabsf(offset_val) - off_int) * 1000);
+
+         float bth = _mmu->GetBoostThreshold();
+         int bth_int = (int)__builtin_fabsf(bth);
+         int bth_dec = (int)((__builtin_fabsf(bth) - bth_int) * 1000);
+
+         float bpw = _mmu->GetBoostPWM();
+         int bpw_int = (int)__builtin_fabsf(bpw);
+         int bpw_dec = (int)((__builtin_fabsf(bpw) - bpw_int) * 10);
+
+         float dz = _mmu->GetRetractDeadzone();
+         int dz_int = (int)__builtin_fabsf(dz);
+         int dz_dec = (int)((__builtin_fabsf(dz) - dz_int) * 100);
+
+         float mpw = _mmu->GetPressureMinPWM();
+         int mpw_int = (int)__builtin_fabsf(mpw);
+         int mpw_dec = (int)((__builtin_fabsf(mpw) - mpw_int) * 10);
+
+         offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, 
+             "],\"p_tol\":%s%d.%03d,\"p_gain\":%s%d.%01d,\"p_offset\":%s%d.%03d,\"p_boost_thr\":%s%d.%03d,\"p_boost_pwm\":%s%d.%01d,\"p_boost_time\":%u,\"p_deadzone\":%s%d.%02d,\"p_min_pwm\":%s%d.%01d,\"m_p\":%d.%d,\"m_i\":%d.%d,\"m_d\":%d.%d,\"m_zero\":%d}\r\n",
+             get_sign(tol), tol_int, tol_dec,
+             get_sign(gain), g_int, g_dec,
+             get_sign(offset_val), off_int, off_dec,
+             get_sign(bth), bth_int, bth_dec,
+             get_sign(bpw), bpw_int, bpw_dec,
+             (unsigned int)_mmu->GetBoostTime(),
+             get_sign(dz), dz_int, dz_dec,
+             get_sign(mpw), mpw_int, mpw_dec,
+             (int)_mmu->GetMoveP(), (int)(_mmu->GetMoveP() * 10) % 10,
+             (int)_mmu->GetMoveI(), (int)(_mmu->GetMoveI() * 10) % 10,
+             (int)_mmu->GetMoveD(), (int)(_mmu->GetMoveD() * 10) % 10,
+             (int)_mmu->GetMovePwmZero());
+             
          if (_transport) _transport->Write((const uint8_t*)global_json_buf, offset);
     }
     
@@ -239,40 +276,35 @@ namespace KlipperCLI {
             SendError(id, "BAD_LANE", "Lane must be 0-3");
             return;
         }
-        // UnitState::SetCurrentFilamentIndex(lane); -> Not available on MMU_Logic public interface?
-        // Logic check: "data_save.BambuBus_now_filament_num = index;" logic is internal?
-        // MMU_Logic has `GetCurrentFilamentIndex`. Does it have Set?
-        // I missed adding `SetCurrentFilamentIndex` to MMU_Logic public interface!
-        // But `SelectLane` implies just selecting it for context?
-        // BambuBus protocol used "process..." to set it.
-        // I should ADD `SelectLane(int)` to MMU_Logic or just handle it.
-        // Actually, `StartLoadFilament` sets it.
-        // Does Klipper utilize "SelectLane" without moving?
-        // If so, I need to add `SetActiveLane(int)` to MMU_Logic.
-        // I will implement `_mmu->data_save.BambuBus_now_filament_num = lane` if I could access it.
-        // But it's private.
-        // I will add a method in MMU_Logic.h/cpp later? Or assume SelectLane is not critical for now?
-        // It is used for "FEED" axis target.
-        // I will omit it for now or implement `SetAutoFeed` which sets it?
-        // Actually `HandleSelectLane` sets "BambuBus_now_filament_num".
-        // I'll skip it and reply OK, but warn myself.
-        // Wait, Klipper `SELECT_LANE` is likely important.
-        // I should add `SetCurrentFilamentIndex` to `MMU_Logic`.
-        // I'll add it to `MMU_Logic` via `replace_file_content` after this.
         
         _mmu->SetCurrentFilamentIndex(lane);
         SendOk(id);
     }
 
-    void HandleSetAutoFeed(int id, JsonObject args) {
+    void HandleSetAutoFeed(int id, LiteObject& args) {
         if (!_mmu) return;
-        if(!args["lane"].isInt() || !args["enable"].isBool()) {
-             SendError(id, "BAD_ARGS", "Missing lane or enable");
-             return;
+        int lane = args["lane"] | -1;
+        
+        // Incremental logic: if key is missing, keep current state
+        bool enable;
+        if (args.containsKey("enable")) {
+            enable = args["enable"];
+        } else if (args.containsKey("ENABLE")) {
+            enable = args["ENABLE"];
+        } else {
+            enable = (lane >= 0 && lane < 4) ? _mmu->GetLaneAutoFeed(lane) : false;
         }
-        int lane = args["lane"];
-        bool enable = args["enable"];
-        _mmu->SetAutoFeed(lane, enable);
+
+        bool overflow;
+        if (args.containsKey("overflow")) {
+            overflow = args["overflow"];
+        } else if (args.containsKey("OVERFLOW")) {
+            overflow = args["OVERFLOW"];
+        } else {
+            overflow = (lane >= 0 && lane < 4) ? _mmu->GetLaneOverflow(lane) : false;
+        }
+
+        _mmu->SetAutoFeed(lane, enable, overflow);
         SendOk(id);
     }
 
@@ -460,6 +492,80 @@ namespace KlipperCLI {
         SendOk(id);
     }
 
+    void HandleSetPressureAdvanced(int id, LiteObject& args) {
+        if (!_mmu) return;
+        
+        // Helper to check both cases
+        auto get_float = [&](const char* lower, const char* upper) -> float {
+            if (args[lower].isFloat()) return args[lower];
+            if (args[upper].isFloat()) return args[upper];
+            return -1e10f; // Sentinel
+        };
+
+        float gain = get_float("gain", "GAIN");
+        if (gain > -1e9f) _mmu->SetPressureGain(gain);
+
+        float offset = get_float("offset", "OFFSET");
+        if (offset > -1e9f) _mmu->SetPressureOffset(offset);
+
+        float bth = get_float("boost_thr", "BOOST_THR");
+        if (bth > -1e9f) _mmu->SetBoostThreshold(bth);
+
+        float bpw = get_float("boost_pwm", "BOOST_PWM");
+        if (bpw > -1e9f) _mmu->SetBoostPWM(bpw);
+
+        float dz = get_float("deadzone", "DEADZONE");
+        if (dz > -1e9f) _mmu->SetRetractDeadzone(dz);
+
+        float mpw = get_float("min_pwm", "MIN_PWM");
+        if (mpw > -1e9f) _mmu->SetPressureMinPWM(mpw);
+
+        float tol = get_float("tol", "TOL");
+        if (tol > -1e9f) _mmu->SetPressureTolerance(tol);
+
+        if (args["boost_time"].isInt()) _mmu->SetBoostTime((uint32_t)args["boost_time"]);
+        else if (args["BOOST_TIME"].isInt()) _mmu->SetBoostTime((uint32_t)args["BOOST_TIME"]);
+
+        SendOk(id);
+    }
+
+    void HandleSetMovePID(int id, LiteObject& args) {
+        if (!_mmu) return;
+        
+        auto get_float = [&](const char* lower, const char* upper) -> float {
+            if (args[lower].isFloat()) return args[lower];
+            if (args[upper].isFloat()) return args[upper];
+            if (args[lower].isInt()) return (float)args[lower].asInt();
+            if (args[upper].isInt()) return (float)args[upper].asInt();
+            return -1e10f;
+        };
+
+        float p = get_float("p", "P");
+        float i = get_float("i", "I");
+        float d = get_float("d", "D");
+        float zero = get_float("zero", "ZERO");
+
+        _mmu->SetMovePID(p, i, d, zero);
+        SendOk(id);
+    }
+
+    void HandleFeedToExtruder(int id, LiteObject& args) {
+        if (!_mmu) return;
+        int lane = args["lane"] | (args["LANE"] | -1);
+        float spd = args["speed"].isFloat() ? args["speed"] : (args["SPEED"].isFloat() ? args["SPEED"] : 15.0f);
+        float max = args["max_mm"].isFloat() ? args["max_mm"] : (args["MAX_MM"].isFloat() ? args["MAX_MM"] : 150.0f);
+        float pthr = args["pressure_thr"].isFloat() ? args["pressure_thr"] : (args["PRESSURE_THR"].isFloat() ? args["PRESSURE_THR"] : 0.15f);
+        uint32_t stall = args["stall_ms"].isInt() ? (uint32_t)args["stall_ms"] : (args["STALL"].isInt() ? (uint32_t)args["STALL"] : 300);
+
+        if (lane < 0 || lane >= 4) {
+            SendError(id, "BAD_LANE", "Lane 0-3 required");
+            return;
+        }
+
+        _mmu->StartFeedToExtruder(lane, spd, max, pthr, stall, id);
+        SendOk(id, "MOVING", "FTE started");
+    }
+
     void ProcessPacket(char* json_str) {
         // Guard against null or empty input
         if (!json_str || json_str[0] == '\0') {
@@ -503,22 +609,22 @@ namespace KlipperCLI {
 
         if (!cmd) return;
 
-        if (strcmp(cmd, "PING") == 0) HandlePing(id, args);
-        else if (strcmp(cmd, "STATUS") == 0) HandleStatus(id, args);
-        else if (strcmp(cmd, "GET_SENSORS") == 0) HandleGetSensors(id, args);
-        else if (strcmp(cmd, "MOVE") == 0) HandleMove(id, args);
-        else if (strcmp(cmd, "STOP") == 0) HandleStop(id, args);
-        else if (strcmp(cmd, "SELECT_LANE") == 0) HandleSelectLane(id, args);
-        else if (strcmp(cmd, "SET_AUTO_FEED") == 0) HandleSetAutoFeed(id, args);
-        else if (strcmp(cmd, "GET_FILAMENT_INFO") == 0) HandleGetFilamentInfo(id, args);
-        else if (strcmp(cmd, "SET_FILAMENT_INFO") == 0) HandleSetFilamentInfo(id, args);
-        else if (strcmp(cmd, "CALIBRATE") == 0) HandleCalibrate(id, args);
-        else if (strcmp(cmd, "SET_TOLERANCE") == 0 || strcmp(cmd, "SET_PRESSURE_TOLERANCE") == 0) HandleSetTolerance(id, args);
-        else if (strcmp(cmd, "SET_PRESSURE_GAIN") == 0) HandleSetGain(id, args);
-        else if (strcmp(cmd, "SET_PRESSURE_MIN_PWM") == 0 || strcmp(cmd, "SET_PRESSURE_BOOST") == 0) HandleSetBoost(id, args);
-        else if (strcmp(cmd, "TEST_MOTOR") == 0) HandleTestMotor(id, args);
+        if (strcasecmp(cmd, "PING") == 0) HandlePing(id, args);
+        else if (strcasecmp(cmd, "STATUS") == 0) HandleStatus(id, args);
+        else if (strcasecmp(cmd, "GET_SENSORS") == 0) HandleGetSensors(id, args);
+        else if (strcasecmp(cmd, "MOVE") == 0) HandleMove(id, args);
+        else if (strcasecmp(cmd, "STOP") == 0) HandleStop(id, args);
+        else if (strcasecmp(cmd, "SELECT_LANE") == 0) HandleSelectLane(id, args);
+        else if (strcasecmp(cmd, "SET_AUTO_FEED") == 0) HandleSetAutoFeed(id, args);
+        else if (strcasecmp(cmd, "SET_PRESSURE_ADVANCED") == 0 || strcasecmp(cmd, "SET_PA") == 0) HandleSetPressureAdvanced(id, args);
+        else if (strcasecmp(cmd, "SET_MOVE_PID") == 0) HandleSetMovePID(id, args);
+        else if (strcasecmp(cmd, "GET_FILAMENT_INFO") == 0) HandleGetFilamentInfo(id, args);
+        else if (strcasecmp(cmd, "SET_FILAMENT_INFO") == 0) HandleSetFilamentInfo(id, args);
+        else if (strcasecmp(cmd, "CALIBRATE") == 0) HandleCalibrate(id, args);
+        else if (strcasecmp(cmd, "TEST_MOTOR") == 0) HandleTestMotor(id, args);
+        else if (strcasecmp(cmd, "FEED_TO_EXTRUDER") == 0) HandleFeedToExtruder(id, args);
         else {
-            SendError(id, "UNKNOWN_CMD", cmd);
+            SendError(id, "UNKNOWN_COMMAND", cmd);
         }
     }
 
@@ -573,6 +679,31 @@ namespace KlipperCLI {
                         i, enc, p_int, p_dec);
                     if (_transport) _transport->Write((const uint8_t*)global_json_buf, len);
                 }
+            }
+        }
+
+        // FTE Notification
+        if (_mmu && millis() - last_fte_check > 50) {
+            last_fte_check = millis();
+            float dist_mm = 0.0f;
+            auto reason = _mmu->GetFTEResult(dist_mm);
+            if (reason != MMU_Logic::StopReason::none) {
+                const char* stop_str =
+                    (reason == MMU_Logic::StopReason::pressure) ? "pressure" :
+                    (reason == MMU_Logic::StopReason::stall)    ? "stall"    :
+                    (reason == MMU_Logic::StopReason::distance) ? "distance" : "unknown";
+
+                int d_int = (int)dist_mm;
+                int d_dec = (int)((dist_mm - d_int) * 100);
+                if (d_dec < 0) d_dec = -d_dec;
+
+                int len = snprintf(global_json_buf, sizeof(global_json_buf),
+                    "{\"id\":%d,\"ok\":true,\"cmd\":\"FEED_TO_EXTRUDER\","
+                    "\"stopped_by\":\"%s\",\"dist_moved_mm\":%d.%02d}\r\n",
+                    _mmu->GetFTECmdId(), stop_str, d_int, d_dec);
+                if (_transport) _transport->Write((const uint8_t*)global_json_buf, len);
+
+                _mmu->ClearFTEResult();
             }
         }
     }

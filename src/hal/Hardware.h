@@ -7,22 +7,10 @@
 
 // Motor Direction Configuration
 // Set to true to invert the motor direction for the specific channel
-#define MOTOR_INVERT_CH1 false
-#define MOTOR_INVERT_CH2 false
-#define MOTOR_INVERT_CH3 false
-#define MOTOR_INVERT_CH4 false
-
-// Motor Speed Configuration
-// #define MOTOR_SPEED_SEND 50
-// #define MOTOR_SPEED_AMS_LITE_SEND 30
-// #define MOTOR_SPEED_SLOW_SEND 3
-// #define MOTOR_SPEED_PULL 50
-
-// PID Inversion Configuration
-#define MOTOR_PID_INVERT_CH1 false
-#define MOTOR_PID_INVERT_CH2 false
-#define MOTOR_PID_INVERT_CH3 false
-#define MOTOR_PID_INVERT_CH4 false
+#define MOTOR_INVERT_CH1 true
+#define MOTOR_INVERT_CH2 true
+#define MOTOR_INVERT_CH3 true
+#define MOTOR_INVERT_CH4 true
 
 // Device Info
 #ifndef DEVICE_MODEL

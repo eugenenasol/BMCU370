@@ -15,6 +15,7 @@ public:
     // --- System ---
     virtual void Init() = 0;
     virtual uint64_t GetTimeMS() = 0;
+    virtual uint64_t GetTimeUS() = 0;
     virtual void DelayMS(uint32_t ms) = 0;
     virtual void WatchdogReset() = 0;
 

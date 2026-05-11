@@ -10,6 +10,7 @@ public:
     // --- System ---
     void Init() override;
     uint64_t GetTimeMS() override;
+    uint64_t GetTimeUS() override;
     void DelayMS(uint32_t ms) override;
     void WatchdogReset() override;
 
