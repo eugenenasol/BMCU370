@@ -16,9 +16,15 @@
 namespace KlipperCLI {
 
     static MMU_Logic* _mmu = nullptr;
-    static I_MMU_Transport* _transport = nullptr;
-    static char rx_buffer[1024]; // Synced to UART_Transport size
+    static I_MMU_Transport* _transport = nullptr; // Primary
+    static I_MMU_Transport* _aux_transport = nullptr; // Auxiliary
+
+    static char rx_buffer[1024]; // Primary RX buffer
     static int rx_idx = 0;
+
+    static char rx_buffer_aux[1024]; // Auxiliary RX buffer
+    static int rx_idx_aux = 0;
+
     static bool last_was_cr = false;
     static JsonDocument doc;
     static char global_json_buf[2048]; // Shared buffer for all responses
@@ -26,25 +32,33 @@ namespace KlipperCLI {
     static uint64_t last_diag_broadcast = 0;
     static uint64_t last_fte_check = 0;
 
+    // Pointer to track which transport received the request currently being processed
+    static I_MMU_Transport* _current_response_transport = nullptr;
+
     const char* get_sign(float val) { return (val < 0) ? "-" : ""; }
 
     // Response Helper
-    void WaitTX() {
-        if (!_transport) return;
+    void WaitTX(I_MMU_Transport* t) {
+        if (!t) return;
         uint32_t timeout = 200; 
         uint64_t start = millis();
-        while (_transport->IsBusy() && (millis() - start < timeout)) {
+        while (t->IsBusy() && (millis() - start < timeout)) {
             Hardware::DelayUS(100); // Reduced from 1ms to improve throughput
         }
     }
 
+    void WaitTX() {
+        WaitTX(_current_response_transport ? _current_response_transport : _transport);
+    }
+
     void SendResponse(JsonDocument& d) {
-        if (!_transport) return;
-        WaitTX();
+        I_MMU_Transport* t = _current_response_transport ? _current_response_transport : _transport;
+        if (!t) return;
+        WaitTX(t);
         size_t len = serializeJson(d, global_json_buf, sizeof(global_json_buf) - 2);
         global_json_buf[len++] = '\r';
         global_json_buf[len++] = '\n';
-        _transport->Write((const uint8_t*)global_json_buf, len);
+        t->Write((const uint8_t*)global_json_buf, len);
     }
     
     void SendError(int id, const char* code, const char* msg) {
@@ -214,7 +228,8 @@ namespace KlipperCLI {
              (int)_mmu->GetMoveD(), (int)(_mmu->GetMoveD() * 10) % 10,
              (int)_mmu->GetMovePwmZero());
              
-         if (_transport) _transport->Write((const uint8_t*)global_json_buf, offset);
+         I_MMU_Transport* t = _current_response_transport ? _current_response_transport : _transport;
+         if (t) t->Write((const uint8_t*)global_json_buf, offset);
     }
     
     void HandleGetSensors(int id, JsonObject args) {
@@ -596,7 +611,8 @@ namespace KlipperCLI {
             snprintf(err_buf, sizeof(err_buf), 
                 "{\"ok\":false,\"msg\":\"JSON Parse Error\",\"received\":\"%s\",\"error\":\"%s\"}\n",
                 truncated, error.c_str());
-            if (_transport) _transport->Write((const uint8_t*)err_buf, strlen(err_buf));
+            I_MMU_Transport* t = _current_response_transport ? _current_response_transport : _transport;
+            if (t) t->Write((const uint8_t*)err_buf, strlen(err_buf));
             return;
         }
 
@@ -628,38 +644,70 @@ namespace KlipperCLI {
         }
     }
 
-    void Init(MMU_Logic* mmu, I_MMU_Transport* transport) {
+    void Init(MMU_Logic* mmu, I_MMU_Transport* main_transport, I_MMU_Transport* aux_transport) {
         _mmu = mmu;
-        _transport = transport;
+        _transport = main_transport;
+        _aux_transport = aux_transport;
         const char* startup = "{\"event\":\"STARTUP\",\"msg\":\"KlipperCLI Ready\"}\r\n";
         if (_transport) _transport->Write((const uint8_t*)startup, strlen(startup));
+        if (_aux_transport) _aux_transport->Write((const uint8_t*)startup, strlen(startup));
     }
     
     void Run() {
-        if (!_transport) return;
-        
-        int bytes_to_read = 64; 
-        while (_transport->Available() > 0 && bytes_to_read-- > 0) {
-            int b = _transport->Read();
-            if (b < 0) break;
-            
-            // Noise filter: drop non-printable/invalid bytes
-            if (b != '\r' && b != '\n' && (b < 32 || b > 126)) {
-                continue; 
-            }
-            
-            if (b == '\n' || b == '\r') {
-                if (rx_idx > 0) {
-                    rx_buffer[rx_idx] = '\0';
-                    last_activity_time = millis();
-                    ProcessPacket(rx_buffer);
+        // Process Primary Channel
+        if (_transport) {
+            int bytes_to_read = 64; 
+            while (_transport->Available() > 0 && bytes_to_read-- > 0) {
+                int b = _transport->Read();
+                if (b < 0) break;
+                
+                if (b != '\r' && b != '\n' && (b < 32 || b > 126)) {
+                    continue; 
                 }
-                rx_idx = 0;
-            } else {
-                if (rx_idx < (int)sizeof(rx_buffer) - 1) {
-                    rx_buffer[rx_idx++] = (char)b;
+                
+                if (b == '\n' || b == '\r') {
+                    if (rx_idx > 0) {
+                        rx_buffer[rx_idx] = '\0';
+                        last_activity_time = millis();
+                        _current_response_transport = _transport;
+                        ProcessPacket(rx_buffer);
+                    }
+                    rx_idx = 0;
                 } else {
-                    rx_idx = 0; 
+                    if (rx_idx < (int)sizeof(rx_buffer) - 1) {
+                        rx_buffer[rx_idx++] = (char)b;
+                    } else {
+                        rx_idx = 0; 
+                    }
+                }
+            }
+        }
+
+        // Process Auxiliary Channel
+        if (_aux_transport) {
+            int bytes_to_read = 64; 
+            while (_aux_transport->Available() > 0 && bytes_to_read-- > 0) {
+                int b = _aux_transport->Read();
+                if (b < 0) break;
+                
+                if (b != '\r' && b != '\n' && (b < 32 || b > 126)) {
+                    continue; 
+                }
+                
+                if (b == '\n' || b == '\r') {
+                    if (rx_idx_aux > 0) {
+                        rx_buffer_aux[rx_idx_aux] = '\0';
+                        last_activity_time = millis();
+                        _current_response_transport = _aux_transport;
+                        ProcessPacket(rx_buffer_aux);
+                    }
+                    rx_idx_aux = 0;
+                } else {
+                    if (rx_idx_aux < (int)sizeof(rx_buffer_aux) - 1) {
+                        rx_buffer_aux[rx_idx_aux++] = (char)b;
+                    } else {
+                        rx_idx_aux = 0; 
+                    }
                 }
             }
         }
@@ -678,6 +726,7 @@ namespace KlipperCLI {
                         "{\"event\":\"DIAG_DATA\",\"lane\":%d,\"raw_enc\":%d,\"raw_pressure\":%d.%03d}\r\n",
                         i, enc, p_int, p_dec);
                     if (_transport) _transport->Write((const uint8_t*)global_json_buf, len);
+                    if (_aux_transport) _aux_transport->Write((const uint8_t*)global_json_buf, len);
                 }
             }
         }
@@ -702,6 +751,7 @@ namespace KlipperCLI {
                     "\"stopped_by\":\"%s\",\"dist_moved_mm\":%d.%02d}\r\n",
                     _mmu->GetFTECmdId(), stop_str, d_int, d_dec);
                 if (_transport) _transport->Write((const uint8_t*)global_json_buf, len);
+                if (_aux_transport) _aux_transport->Write((const uint8_t*)global_json_buf, len);
 
                 _mmu->ClearFTEResult();
             }
@@ -709,7 +759,9 @@ namespace KlipperCLI {
     }
     
     bool IsConnected() {
-        return _transport && _transport->IsConnected();
+        bool main_conn = _transport && _transport->IsConnected();
+        bool aux_conn = _aux_transport && _aux_transport->IsConnected();
+        return main_conn || aux_conn;
     }
     
     // Returns true if no serial activity for the specified duration (ms)

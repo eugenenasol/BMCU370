@@ -16,9 +16,10 @@ public:
     /**
      * @brief Initialize the API Layer.
      * @param logic Pointer to the main business logic instance.
-     * @param transport Pointer to the transport layer for communication.
+     * @param transport Pointer to the primary transport layer.
+     * @param aux_transport Pointer to the auxiliary transport layer (optional).
      */
-    virtual void Init(MMU_Logic* logic, I_MMU_Transport* transport) = 0;
+    virtual void Init(MMU_Logic* logic, I_MMU_Transport* transport, I_MMU_Transport* aux_transport = nullptr) = 0;
 
     /**
      * @brief Main processing loop. Should be called frequently.

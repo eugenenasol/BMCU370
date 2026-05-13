@@ -1,6 +1,6 @@
 #pragma once
 
-#include "I_MMU_Transport.h"
+#include "../interfaces/I_MMU_Transport.h"
 #include "Hardware.h"
 
 /**
@@ -12,10 +12,16 @@
  */
 class UART_Transport : public I_MMU_Transport {
 public:
+    enum class UARTPort {
+        USART1_Main,
+        USART3_Aux
+    };
+
     UART_Transport() {}
     virtual ~UART_Transport() {}
 
     void Init() override;
+    void Init(UARTPort port);
     
     uint16_t Available() override;
     int Read() override;
@@ -30,6 +36,8 @@ public:
     void OnByteReceived(uint8_t byte);
 
 private:
+    UARTPort _port = UARTPort::USART1_Main;
+
     // Ring buffer for received bytes (reverted to 1024 for RAM safety)
     static constexpr uint16_t RX_BUFFER_SIZE = 1024;
     volatile uint8_t rx_buffer[RX_BUFFER_SIZE];

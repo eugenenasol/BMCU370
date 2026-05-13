@@ -13,9 +13,10 @@ namespace KlipperCLI {
     /**
      * @brief Initialize the CLI with logic and transport dependencies.
      * @param mmu Pointer to MMU_Logic instance.
-     * @param transport Pointer to transport layer for communication.
+     * @param main_transport Pointer to primary transport layer.
+     * @param aux_transport Pointer to auxiliary transport layer (optional).
      */
-    void Init(MMU_Logic* mmu, I_MMU_Transport* transport);
+    void Init(MMU_Logic* mmu, I_MMU_Transport* main_transport, I_MMU_Transport* aux_transport = nullptr);
 
     // Main loop processor - handles incoming serial data
     void Run();

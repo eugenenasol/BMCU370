@@ -49,6 +49,13 @@ void UART_Send(const uint8_t *data, uint16_t length);
 void UART_SendByte(uint8_t data);
 bool UART_IsBusy();
 
+// USART3 Aux Interface (PB10/PB11)
+void InitUSART3();
+void USART3_SetRxCallback(void (*callback)(uint8_t));
+void USART3_Send(const uint8_t *data, uint16_t length);
+void USART3_SendByte(uint8_t data);
+bool USART3_IsBusy();
+
 // ADC
 void ADC_Init();
 float *ADC_GetValues(); // Returns pointer to 8 floats

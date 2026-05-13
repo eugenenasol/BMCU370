@@ -4,20 +4,39 @@
  */
 #include "UART_Transport.h"
 
-// Global instance pointer for interrupt callback
-static UART_Transport* g_transport_instance = nullptr;
+// Global instance pointers for interrupt callbacks
+static UART_Transport* g_transport_main = nullptr;
+static UART_Transport* g_transport_aux = nullptr;
 
-// Callback for Hardware RX interrupt
-static void uart_rx_callback(uint8_t byte) {
-    if (g_transport_instance) {
-        g_transport_instance->OnByteReceived(byte);
+// Callback for main USART1 RX interrupt
+static void uart_main_rx_callback(uint8_t byte) {
+    if (g_transport_main) {
+        g_transport_main->OnByteReceived(byte);
+    }
+}
+
+// Callback for auxiliary USART3 RX interrupt
+static void uart_aux_rx_callback(uint8_t byte) {
+    if (g_transport_aux) {
+        g_transport_aux->OnByteReceived(byte);
     }
 }
 
 void UART_Transport::Init() {
-    g_transport_instance = this;
-    Hardware::InitUART(true); // Klipper mode UART
-    Hardware::UART_SetRxCallback(uart_rx_callback);
+    Init(UARTPort::USART1_Main);
+}
+
+void UART_Transport::Init(UARTPort port) {
+    _port = port;
+    if (_port == UARTPort::USART1_Main) {
+        g_transport_main = this;
+        Hardware::InitUART(true); // Klipper mode UART
+        Hardware::UART_SetRxCallback(uart_main_rx_callback);
+    } else {
+        g_transport_aux = this;
+        Hardware::InitUSART3(); // Auxiliary interface
+        Hardware::USART3_SetRxCallback(uart_aux_rx_callback);
+    }
 }
 
 uint16_t UART_Transport::Available() {
@@ -49,7 +68,11 @@ uint16_t UART_Transport::ReadBytes(uint8_t* buffer, uint16_t len) {
 }
 
 uint16_t UART_Transport::Write(const uint8_t* data, uint16_t len) {
-    Hardware::UART_Send(data, len);
+    if (_port == UARTPort::USART1_Main) {
+        Hardware::UART_Send(data, len);
+    } else {
+        Hardware::USART3_Send(data, len);
+    }
     return len;
 }
 
@@ -63,7 +86,11 @@ bool UART_Transport::IsConnected() {
 }
 
 bool UART_Transport::IsBusy() {
-    return Hardware::UART_IsBusy();
+    if (_port == UARTPort::USART1_Main) {
+        return Hardware::UART_IsBusy();
+    } else {
+        return Hardware::USART3_IsBusy();
+    }
 }
 
 void UART_Transport::OnByteReceived(uint8_t byte) {

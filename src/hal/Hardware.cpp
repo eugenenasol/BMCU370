@@ -39,6 +39,7 @@ DMA_InitTypeDef Bambubus_DMA_InitStructure;
 /* DEVELOPMENT STATE: FUNCTIONAL - DO NOT MODIFY */
 namespace Hardware {
     static volatile bool uart_tx_busy = false; // Tracks full TX lifecycle (including DE pin)
+    static volatile bool usart3_tx_busy = false; // Tracks auxiliary USART3 TX lifecycle
     static bool klipper_mode = false; // When true, DE stays HIGH (RS485 RX disabled for TTL)
 
     // ADC State
@@ -124,6 +125,7 @@ namespace Hardware {
 
     // --- UART ---
     static void (*uart_rx_callback)(uint8_t) = nullptr;
+    static void (*usart3_rx_callback)(uint8_t) = nullptr;
 
     /* DEVELOPMENT STATE: FUNCTIONAL */
     /**
@@ -133,6 +135,15 @@ namespace Hardware {
      */
     void UART_SetRxCallback(void (*callback)(uint8_t)) {
         uart_rx_callback = callback;
+    }
+
+    /**
+     * @brief Register a callback for auxiliary USART3 RX.
+     * 
+     * @param callback Function pointer void(uint8_t byte).
+     */
+    void USART3_SetRxCallback(void (*callback)(uint8_t)) {
+        usart3_rx_callback = callback;
     }
 
     /* DEVELOPMENT STATE: TESTING */
@@ -210,6 +221,48 @@ namespace Hardware {
 
         USART_Cmd(USART1, ENABLE);
     }
+
+    /**
+     * @brief Initialize auxiliary USART3 on PB10/PB11.
+     * 
+     * Configures PB10(TX), PB11(RX) at 115200 baud.
+     */
+    void InitUSART3() {
+        GPIO_InitTypeDef GPIO_InitStructure = {0};
+        USART_InitTypeDef USART_InitStructure = {0};
+        NVIC_InitTypeDef NVIC_InitStructure = {0};
+
+        RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART3, ENABLE);
+        RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
+
+        /* USART3 TX-->B.10   RX-->B.11 */
+        GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10; // TX
+        GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+        GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+        GPIO_Init(GPIOB, &GPIO_InitStructure);
+
+        GPIO_InitStructure.GPIO_Pin = GPIO_Pin_11; // RX
+        GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
+        GPIO_Init(GPIOB, &GPIO_InitStructure);
+
+        USART_InitStructure.USART_BaudRate = 115200;
+        USART_InitStructure.USART_Parity = USART_Parity_No;
+        USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+        USART_InitStructure.USART_StopBits = USART_StopBits_1;
+        USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+        USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
+
+        USART_Init(USART3, &USART_InitStructure);
+        USART_ITConfig(USART3, USART_IT_RXNE, ENABLE);
+
+        NVIC_InitStructure.NVIC_IRQChannel = USART3_IRQn;
+        NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+        NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+        NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+        NVIC_Init(&NVIC_InitStructure);
+
+        USART_Cmd(USART3, ENABLE);
+    }
     
     extern "C" void USART1_IRQHandler(void) __attribute__((interrupt("WCH-Interrupt-fast")));
     /* DEVELOPMENT STATE: FUNCTIONAL */
@@ -242,6 +295,32 @@ namespace Hardware {
             USART_ClearITPendingBit(USART1, USART_IT_TC);
             GPIOA->BCR = GPIO_Pin_12; // Return to RX mode (DE LOW)
             uart_tx_busy = false;
+        }
+    }
+
+    extern "C" void USART3_IRQHandler(void) __attribute__((interrupt("WCH-Interrupt-fast")));
+    /**
+     * @brief Auxiliary USART3 Interrupt Service Routine.
+     * 
+     * Handles RXNE (Receive Data) and TC (Transmission Complete) for TTL interface.
+     */
+    void USART3_IRQHandler(void)
+    {
+        volatile uint32_t sr = USART3->STATR;
+        volatile uint32_t dr;
+
+        if ((sr & USART_FLAG_RXNE) || (sr & USART_FLAG_ORE)) 
+        {
+            dr = USART3->DATAR;
+            if (sr & USART_FLAG_RXNE) {
+                if (usart3_rx_callback) usart3_rx_callback((uint8_t)dr);
+            }
+        }
+
+        if (sr & USART_FLAG_TC)
+        {
+            USART_ClearITPendingBit(USART3, USART_IT_TC);
+            usart3_tx_busy = false;
         }
     }
 
@@ -341,6 +420,51 @@ namespace Hardware {
         // 3. Check USART TXE (Transmit Data Register Empty)
         if (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET) return true;
 
+        return false;
+    }
+
+    /**
+     * @brief Send a single byte blocking via auxiliary USART3.
+     * 
+     * @param data Byte to send.
+     */
+    void USART3_SendByte(uint8_t data) {
+        uint32_t timeout = 10000;
+        while (USART_GetFlagStatus(USART3, USART_FLAG_TXE) == RESET && timeout--) {
+            DelayUS(1);
+        }
+        if (timeout > 0) USART_SendData(USART3, data);
+    }
+
+    /**
+     * @brief Send a buffer via auxiliary USART3.
+     * 
+     * Uses reliable blocking transmission to avoid DMA contention.
+     * 
+     * @param data Pointer to data buffer.
+     * @param length Number of bytes to send.
+     */
+    void USART3_Send(const uint8_t *data, uint16_t length) {
+        usart3_tx_busy = true;
+        USART_ClearFlag(USART3, USART_FLAG_TC);
+        USART_ITConfig(USART3, USART_IT_TC, DISABLE);
+
+        for (uint16_t i = 0; i < length; i++) {
+            USART3_SendByte(data[i]);
+        }
+
+        USART_ClearFlag(USART3, USART_FLAG_TC);
+        USART_ITConfig(USART3, USART_IT_TC, ENABLE);
+    }
+
+    /**
+     * @brief Check if auxiliary USART3 is currently busy transmitting.
+     * 
+     * @return true if transmission is ongoing.
+     */
+    bool USART3_IsBusy() {
+        if (usart3_tx_busy) return true;
+        if (USART_GetFlagStatus(USART3, USART_FLAG_TXE) == RESET) return true;
         return false;
     }
 

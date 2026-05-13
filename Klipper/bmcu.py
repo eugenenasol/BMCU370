@@ -89,6 +89,22 @@ class BMCU:
         else:
             self.supported_cmds = set()
 
+        # Pressure Advanced config
+        self.p_gain = config.getfloat('p_gain', None)
+        self.p_offset = config.getfloat('p_offset', None)
+        self.p_boost_thr = config.getfloat('p_boost_thr', None)
+        self.p_boost_pwm = config.getfloat('p_boost_pwm', None)
+        self.p_boost_time = config.getint('p_boost_time', None)
+        self.p_deadzone = config.getfloat('p_deadzone', None)
+        self.p_min_pwm = config.getfloat('p_min_pwm', None)
+        self.p_tol = config.getfloat('p_tol', None)
+
+        # Move PID config
+        self.m_p = config.getfloat('m_p', None)
+        self.m_i = config.getfloat('m_i', None)
+        self.m_d = config.getfloat('m_d', None)
+        self.m_zero = config.getint('m_zero', None)
+
         # -----------------------------
         # State
         # -----------------------------
@@ -104,9 +120,14 @@ class BMCU:
 
         # Have we already kicked a STATUS after STARTUP?
         self._did_startup_status = False
+        self._config_sent = False
+
+        self.fte_stopped_by = ""
+        self.fte_dist_mm = 0.0
 
         # Events
         self.printer.register_event_handler("klippy:shutdown", self._handle_shutdown)
+        self.printer.register_event_handler("klippy:connect", self._handle_connect)
 
         # Expose BMCU lane data to Moonraker and Klipper clients via
         # status callbacks.  We attempt to register a callback with
@@ -131,9 +152,8 @@ class BMCU:
         self._register_gcode()
 
         # Timers
-        now = self.reactor.NOW
-        self._read_timer = self.reactor.register_timer(self._handle_read, now + self.read_interval)
-        self._poll_timer = self.reactor.register_timer(self._handle_poll, now + self.poll_interval)
+        self._read_timer = None
+        self._poll_timer = None
 
         if self.debug:
             logging.info("BMCU: initialized (deferred connect) serial=%s baud=%d",
@@ -160,6 +180,13 @@ class BMCU:
         gc.register_command("BMCU_CALL", self.cmd_BMCU_CALL)
         gc.register_command("BMCU_LANE_FEED", self.cmd_BMCU_LANE_FEED)
         gc.register_command("BMCU_LANE_RETRACT", self.cmd_BMCU_LANE_RETRACT)
+        
+        # Extended Commands
+        gc.register_command("BMCU_FEED_TO_EXTRUDER", self.cmd_BMCU_FEED_TO_EXTRUDER)
+        gc.register_command("BMCU_CALIBRATE", self.cmd_BMCU_CALIBRATE)
+        gc.register_command("BMCU_SET_PA", self.cmd_BMCU_SET_PA)
+        gc.register_command("BMCU_SET_MOVE_PID", self.cmd_BMCU_SET_MOVE_PID)
+        gc.register_command("BMCU_TEST_MOTOR", self.cmd_BMCU_TEST_MOTOR)
 
     # -----------------------------
     # Timers
@@ -291,6 +318,8 @@ class BMCU:
             pass
         self.is_connected = True
         self._did_startup_status = False
+        if self._read_timer is None:
+            self._read_timer = self.reactor.register_timer(self._handle_read, self.reactor.NOW + self.read_interval)
         if self.debug:
             logging.info("BMCU: connected on %s @ %d", self.serial_port, self.baud)
 
@@ -303,7 +332,17 @@ class BMCU:
                 pass
         self.ser = None
 
+    def _handle_connect(self):
+        if self._poll_timer is None:
+            self._poll_timer = self.reactor.register_timer(self._handle_poll, self.reactor.NOW + 1.0)
+
     def _handle_shutdown(self):
+        try:
+            if self.is_connected and self.ser:
+                self.ser.write(b'{"cmd":"STOP"}\r\n')
+                self.ser.flush()
+        except Exception:
+            pass
         self._disconnect()
 
     # -----------------------------
@@ -404,11 +443,41 @@ class BMCU:
             # Special: firmware startup event
             if isinstance(pkt, dict) and pkt.get("event") == "STARTUP":
                 if self.debug:
-                    logging.info("BMCU: got STARTUP event, requesting STATUS once")
+                    logging.info("BMCU: got STARTUP event")
+                self._config_sent = False
                 if not self._did_startup_status:
                     self._did_startup_status = True
                     self._send_pkt("STATUS", {}, note="startup_status")
                 return
+
+            if not self._config_sent and isinstance(pkt, dict) and "cmd" in pkt:
+                self._config_sent = True
+                
+                args_pa = {}
+                if self.p_gain is not None: args_pa["gain"] = self.p_gain
+                if self.p_offset is not None: args_pa["offset"] = self.p_offset
+                if self.p_boost_thr is not None: args_pa["boost_thr"] = self.p_boost_thr
+                if self.p_boost_pwm is not None: args_pa["boost_pwm"] = self.p_boost_pwm
+                if self.p_boost_time is not None: args_pa["boost_time"] = self.p_boost_time
+                if self.p_deadzone is not None: args_pa["deadzone"] = self.p_deadzone
+                if self.p_min_pwm is not None: args_pa["min_pwm"] = self.p_min_pwm
+                if self.p_tol is not None: args_pa["tol"] = self.p_tol
+                if args_pa:
+                    if self.debug: logging.info("BMCU: pushing startup SET_PA")
+                    self._send_pkt("SET_PA", args_pa, note="startup_pa")
+                
+                args_pid = {}
+                if self.m_p is not None: args_pid["p"] = self.m_p
+                if self.m_i is not None: args_pid["i"] = self.m_i
+                if self.m_d is not None: args_pid["d"] = self.m_d
+                if self.m_zero is not None: args_pid["zero"] = self.m_zero
+                if args_pid:
+                    if self.debug: logging.info("BMCU: pushing startup SET_MOVE_PID")
+                    self._send_pkt("SET_MOVE_PID", args_pid, note="startup_pid")
+
+            if isinstance(pkt, dict) and pkt.get("cmd") == "FEED_TO_EXTRUDER" and "stopped_by" in pkt:
+                self.fte_stopped_by = str(pkt.get("stopped_by", "unknown"))
+                self.fte_dist_mm = float(pkt.get("dist_moved_mm", 0.0))
 
             if isinstance(pkt, dict) and "id" in pkt:
                 try:
@@ -466,7 +535,9 @@ class BMCU:
         """
         lanes = self.lanes if isinstance(self.lanes, list) else []
         return {
-            'lanes': lanes
+            'lanes': lanes,
+            'fte_stopped_by': self.fte_stopped_by,
+            'fte_dist_mm': self.fte_dist_mm
         }
 
     # Preserve the old _get_status for backward compatibility; delegate to get_status.
@@ -525,8 +596,14 @@ class BMCU:
     def cmd_BMCU_SET_AUTO_FEED(self, gcmd):
         lane = gcmd.get_int("LANE", 0)
         enable = bool(gcmd.get_int("ENABLE", 1))
-        ok, pkt_id = self._send_pkt("SET_AUTO_FEED", {"lane": lane, "enable": enable}, note="auto_feed")
-        gcmd.respond_info(f"AUTO_FEED lane={lane} -> {enable}")
+        overflow_raw = gcmd.get_int("OVERFLOW", None)
+        
+        args = {"lane": lane, "enable": enable}
+        if overflow_raw is not None:
+            args["overflow"] = bool(overflow_raw)
+            
+        ok, pkt_id = self._send_pkt("SET_AUTO_FEED", args, note="auto_feed")
+        gcmd.respond_info(f"AUTO_FEED lane={lane} enable={enable} overflow={overflow_raw}")
 
     def cmd_BMCU_MOVE(self, gcmd):
         axis = gcmd.get("AXIS", "0")
@@ -692,6 +769,86 @@ class BMCU:
             "MOVE",
             {"axis": str(lane), "dist_mm": float(-mm), "speed": float(abs(speed))}, note="lane_retract")
         gcmd.respond_info(f"Lane {lane} RETRACT {mm}mm")
+
+    def cmd_BMCU_FEED_TO_EXTRUDER(self, gcmd):
+        lane = gcmd.get_int("LANE", -1)
+        speed = gcmd.get_float("SPEED", 30.0)
+        max_mm = gcmd.get_float("MAX_MM", 250.0)
+        pressure_thr = gcmd.get_float("PRESSURE_THR", 0.20)
+        stall_ms = gcmd.get_int("STALL", 300)
+        
+        calc_timeout = (max_mm / max(speed, 1.0)) + 10.0
+        wait_s = gcmd.get_float("WAIT", calc_timeout)
+        
+        self.fte_stopped_by = ""
+        self.fte_dist_mm = 0.0
+        
+        args = {"lane": lane, "speed": speed, "max_mm": max_mm, "pressure_thr": pressure_thr, "stall_ms": stall_ms}
+        ok, pkt_id = self._send_pkt("FEED_TO_EXTRUDER", args, note="fte")
+        gcmd.respond_info(f"FEED_TO_EXTRUDER lane={lane} id={pkt_id} (Timeout {wait_s:.1f}s)")
+        
+        if ok and wait_s > 0:
+            end = self.reactor.monotonic() + wait_s
+            while self.reactor.monotonic() < end:
+                self.reactor.pause(self.reactor.monotonic() + 0.05)
+                if self.fte_stopped_by != "":
+                    gcmd.respond_info(f"FTE Completed. Stopped by: {self.fte_stopped_by}. Distance: {self.fte_dist_mm}mm")
+                    return
+            gcmd.respond_info("FTE Timeout! Klipper didn't receive completion event.")
+
+    def cmd_BMCU_CALIBRATE(self, gcmd):
+        lane_raw = gcmd.get_int("LANE", None)
+        wait_s = gcmd.get_float("WAIT", 2.0)
+        
+        args = {}
+        if lane_raw is not None:
+            args["lane"] = lane_raw
+            
+        ok, pkt_id = self._send_pkt("CALIBRATE", args, note="calibrate")
+        gcmd.respond_info(f"CALIBRATE lane={lane_raw if lane_raw is not None else 'ALL'} id={pkt_id}")
+        if ok:
+            self._wait_for_reply(gcmd, pkt_id, wait_s)
+
+    def cmd_BMCU_SET_PA(self, gcmd):
+        args = {}
+        for key in ["GAIN", "OFFSET", "BOOST_THR", "BOOST_PWM", "DEADZONE", "MIN_PWM", "TOL"]:
+            val = gcmd.get_float(key, None)
+            if val is not None: args[key.lower()] = val
+            
+        bt = gcmd.get_int("BOOST_TIME", None)
+        if bt is not None: args["boost_time"] = bt
+        
+        if not args:
+            gcmd.respond_info("SET_PA requires at least one parameter")
+            return
+            
+        ok, pkt_id = self._send_pkt("SET_PA", args, note="set_pa")
+        gcmd.respond_info(f"SET_PA args={args}")
+
+    def cmd_BMCU_SET_MOVE_PID(self, gcmd):
+        args = {}
+        for key in ["P", "I", "D"]:
+            val = gcmd.get_float(key, None)
+            if val is not None: args[key.lower()] = val
+            
+        z = gcmd.get_int("ZERO", None)
+        if z is not None: args["zero"] = z
+        
+        if not args:
+            gcmd.respond_info("SET_MOVE_PID requires at least one parameter")
+            return
+            
+        ok, pkt_id = self._send_pkt("SET_MOVE_PID", args, note="set_move_pid")
+        gcmd.respond_info(f"SET_MOVE_PID args={args}")
+
+    def cmd_BMCU_TEST_MOTOR(self, gcmd):
+        lane = gcmd.get_int("LANE", 0)
+        pwm = gcmd.get_int("PWM", 150)
+        duration = gcmd.get_int("DURATION", 1000)
+        
+        args = {"lane": lane, "pwm": pwm, "duration": duration}
+        ok, pkt_id = self._send_pkt("TEST_MOTOR", args, note="test_motor")
+        gcmd.respond_info(f"TEST_MOTOR lane={lane} pwm={pwm} duration={duration}")
 
 
 def load_config(config):
