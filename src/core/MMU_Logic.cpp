@@ -233,7 +233,12 @@ void MMU_Logic::AS5600_Update(float time_E) {
     speed_as5600[i] = speedx;
     as5600_delta_mm[i] = dist_E;
 
-    data_save.filament[i].meters += dist_E / 1000.0f;
+    // Only accumulate meters when filament is actively moving (not idling)
+    if (motors[i].motion != filament_motion_enum::stop &&
+        motors[i].motion != filament_motion_enum::pressure_ctrl_idle &&
+        motors[i].motion != filament_motion_enum::pressure_ctrl_in_use) {
+        data_save.filament[i].meters += dist_E / 1000.0f;
+    }
   }
 }
 
