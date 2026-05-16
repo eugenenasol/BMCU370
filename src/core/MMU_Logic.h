@@ -316,6 +316,12 @@ private:
   uint64_t diag_end_time[4];
   bool diag_active[4];
 
+  // Motion timing state (replaces static locals in methods)
+  uint64_t _motion_switch_time_end = 0;
+  uint64_t _last_run_us = 0;
+  uint64_t _last_led_update = 0;
+  bool _led_toggle = false;
+
   // Constants
   const bool is_two = true; // AMS Lite logic
   const float PULL_voltage_up = 1.85f;

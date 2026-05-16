@@ -651,20 +651,16 @@ void MMU_Logic::motor_motion_switch() {
 
         case AMS_filament_motion::before_pull_back:
         case AMS_filament_motion::in_use: {
-          static uint64_t time_end =
-              0; // WARNING: Static in member function! Shared across instances.
-          // Should be member variable if we support multiple instances.
-          // For now, static is acceptable as singleton logic.
           uint64_t time_now = get_time64();
 
           if (filament_now_position[num] == filament_sending_out) {
             is_backing_out = false;
             motors[num].pull_state_old = true;
             filament_now_position[num] = filament_using;
-            time_end = time_now + 1500;
+            _motion_switch_time_end = time_now + 1500;
           } else if (filament_now_position[num] == filament_using) {
             last_total_distance[num] = 0; // Fix index i -> num
-            if (time_now > time_end) {
+            if (time_now > _motion_switch_time_end) {
               _hal->SetLED(num, 255, 255, 255);
               motors[num].SetMotion(filament_motion_enum::pressure_ctrl_in_use);
             } else {
@@ -692,14 +688,13 @@ void MMU_Logic::motor_motion_switch() {
 }
 
 void MMU_Logic::Run() {
-  static uint64_t last_run = 0;
   uint64_t now = _hal->GetTimeUS();
-  if (last_run == 0) {
-    last_run = now;
+  if (_last_run_us == 0) {
+    _last_run_us = now;
     return;
   }
-  float time_E = (float)(now - last_run) / 1000000.0f;
-  last_run = now;
+  float time_E = (float)(now - _last_run_us) / 1000000.0f;
+  _last_run_us = now;
 
   MC_PULL_ONLINE_read();
   AS5600_Update(time_E);
@@ -732,16 +727,14 @@ void MMU_Logic::Run() {
   _hal->LED_Show();
 
   // System LED Debug Flash
-  static uint64_t last_led_update = 0;
-  if (now - last_led_update > 1000) {
-    static bool toggle = false;
-    toggle = !toggle;
+  if (now - _last_led_update > 1000) {
+    _led_toggle = !_led_toggle;
     // Heartbeat: White for Klipper/Refactored
-    if (toggle) {
+    if (_led_toggle) {
       _hal->SetLED(4, 10, 10, 10); // White
     } else
       _hal->SetLED(4, 0, 0, 0);
-    last_led_update = now;
+    _last_led_update = now;
   }
   // LED_Show() called at end of Run() — pushes buffered pixels to strip
 }
