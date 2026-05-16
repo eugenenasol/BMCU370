@@ -27,3 +27,6 @@ namespace KlipperCLI {
     // Check if serial has been idle for the specified duration
     bool IsSerialIdle(uint32_t idle_ms);
 }
+
+// Global wrapper for cross-module access (used by MMU_Logic for smart save timing)
+bool KlipperCLI_IsSerialIdle(uint32_t idle_ms);

@@ -1,4 +1,5 @@
 #include "MMU_Logic.h"
+#include "../api/KlipperCLI.h"
 #include "../hal/Flash_saves.h"
 #include "../hal/Hardware.h"
 
@@ -704,7 +705,6 @@ void MMU_Logic::Run() {
     // communication Option 1: Save after 500ms of serial idle (fast response
     // during dead time) Option 2: Force save after 5000ms absolute (safety
     // fallback)
-    extern bool KlipperCLI_IsSerialIdle(uint32_t);   // Forward declaration
     bool serial_idle = KlipperCLI_IsSerialIdle(500); // 500ms of silence
     bool timeout_hit = (now - save_timer > 5000);    // 5s absolute max
 
