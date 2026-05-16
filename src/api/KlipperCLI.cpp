@@ -137,6 +137,14 @@ namespace KlipperCLI {
             }
             safe_name[20] = '\0';
             
+            // Escape JSON-breaking characters
+            for(int j=0; j<20 && safe_name[j]; j++) {
+                if(safe_name[j] == '"' || safe_name[j] == '\\') safe_name[j] = '\'';
+            }
+            for(int j=0; j<8 && safe_id[j]; j++) {
+                if(safe_id[j] == '"' || safe_id[j] == '\\') safe_id[j] = '\'';
+            }
+
              float meters_f = f.meters;
              if (!isfinite(meters_f)) meters_f = 0;
              if (meters_f > 2000000000.0f) meters_f = 2000000000.0f;
@@ -362,7 +370,15 @@ namespace KlipperCLI {
          }
          safe_name[20] = '\0';
 
-         float meters_f = f.meters;
+        // Escape JSON-breaking characters
+        for(int j=0; j<20 && safe_name[j]; j++) {
+            if(safe_name[j] == '"' || safe_name[j] == '\\') safe_name[j] = '\'';
+        }
+        for(int j=0; j<8 && safe_id[j]; j++) {
+            if(safe_id[j] == '"' || safe_id[j] == '\\') safe_id[j] = '\'';
+        }
+
+        float meters_f = f.meters;
          if (!isfinite(meters_f)) meters_f = 0;
          if (meters_f > 2000000000.0f) meters_f = 2000000000.0f;
          if (meters_f < -2000000000.0f) meters_f = -2000000000.0f;
