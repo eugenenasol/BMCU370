@@ -242,8 +242,6 @@ public:
   float GetRawOnline(int lane) {
     return (lane >= 0 && lane < 4) ? MC_ONLINE_key_stu_raw[lane] : 0.0f;
   }
-  float GetLanePIDOutput(int lane);
-
   // Accessors (Replacement for UnitState)
   FilamentState &GetFilament(int index);
   int GetCurrentFilamentIndex();

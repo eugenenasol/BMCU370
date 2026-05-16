@@ -1004,13 +1004,6 @@ void MMU_Logic::DiagnosticMotorControl(int lane, int pwm,
   diag_active[lane] = true;
 }
 
-float MMU_Logic::GetLanePIDOutput(int lane) {
-  // This is tricky because the output is calculated inside RunMotorChannel and
-  // sent to HAL. We don't store the last output in MMU_Logic. For now return 0
-  // or we could add a member to track it.
-  return 0;
-}
-
 int MMU_Logic::GetCurrentFilamentIndex() {
   return data_save.BambuBus_now_filament_num;
 }
