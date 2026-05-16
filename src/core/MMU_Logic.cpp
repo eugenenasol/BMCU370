@@ -42,7 +42,6 @@ float MotorChannel::CalculatePressureOutput(float current_pressure,
 
 MMU_Logic::MMU_Logic(I_MMU_Hardware *hal) : _hal(hal) {
   // Defaults
-  device_type_addr = BambuBus_AMS;
   Bambubus_need_to_save = false;
   save_timer = 0;
 
@@ -53,7 +52,6 @@ MMU_Logic::MMU_Logic(I_MMU_Hardware *hal) : _hal(hal) {
     speed_as5600[i] = 0;
     MC_PULL_stu_raw[i] = 0;
     MC_PULL_stu[i] = 0;
-    MC_ONLINE_key_stu_raw[i] = 0;
     MC_ONLINE_key_stu[i] = 0;
     Assist_send_filament[i] = false;
     last_total_distance[i] = 0;
@@ -81,10 +79,10 @@ void MMU_Logic::Init() {
   // Setup Motor Directions based on Config
   for (int i = 0; i < 4; i++) {
     motors[i].dir = 1.0f; // Standardized: Plus = Forward, Minus = Backward
-    motors[i].SetMotion(filament_motion_enum::pressure_ctrl_idle);
+    motors[i].SetMotion(LaneMotionState::pressure_ctrl_idle);
     motors[i].PID_pressure.Init(data_save.pressure_gain, 0, 0);
 
-    last_total_distance[i] = data_save.filament[i].meters;
+    last_total_distance[i] = data_save.lanes[i].meters;
   }
   SyncMovePID();
 }
@@ -134,17 +132,9 @@ void MMU_Logic::LoadSettings() {
   }
 
   if (need_defaults) {
-    // Default constants - set all 4 filaments to PLA defaults
     for (int i = 0; i < 4; i++) {
-      data_save.filament[i].SetID(""); // Clear RFID
-      data_save.filament[i].SetName("PLA");
-      data_save.filament[i].temperature_min = 200;
-      data_save.filament[i].temperature_max = 220;
-      data_save.filament[i].meters = 0;
-      data_save.filament[i].pressure = 0;
-      data_save.filament[i].color_R = 0xFF;
-      data_save.filament[i].color_G = 0xFF;
-      data_save.filament[i].color_B = 0xFF;
+      data_save.lanes[i].meters = 0;
+      data_save.lanes[i].pressure = 0;
       data_save.pressure_zero[i] = 1.65f;
     }
     data_save.pressure_tolerance = 0.015f;
@@ -155,12 +145,11 @@ void MMU_Logic::LoadSettings() {
     data_save.boost_time_ms = 50;
     data_save.retract_deadzone = 1.2f;
     data_save.pressure_min_pwm = 180.0f;
-    data_save.boot_mode = 1; // Default to Klipper
     data_save.move_p = 25.0f;
     data_save.move_i = 80.0f;
     data_save.move_d = 0.0f;
     data_save.move_pwm_zero = 200.0f;
-    data_save.version = 14;
+    data_save.version = STRUCT_VERSION;
     data_save.check = 0x40614061;
     SetNeedToSave();
   }
@@ -198,10 +187,10 @@ void MMU_Logic::AS5600_Update(float time_E) {
     as5600_delta_mm[i] = dist_E;
 
     // Only accumulate meters when filament is actively moving (not idling)
-    if (motors[i].motion != filament_motion_enum::stop &&
-        motors[i].motion != filament_motion_enum::pressure_ctrl_idle &&
-        motors[i].motion != filament_motion_enum::pressure_ctrl_in_use) {
-        data_save.filament[i].meters += dist_E / 1000.0f;
+    if (motors[i].motion != LaneMotionState::stop &&
+        motors[i].motion != LaneMotionState::pressure_ctrl_idle &&
+        motors[i].motion != LaneMotionState::pressure_ctrl_in_use) {
+        data_save.lanes[i].meters += dist_E / 1000.0f;
     }
   }
 }
@@ -210,7 +199,7 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
   MotorChannel &m = motors[channel];
 
   // Advanced LED logic for Auto-Feed mode
-  if (m.SET_AUTO_FEED || m.motion == filament_motion_enum::pressure_ctrl_in_use) {
+  if (m.SET_AUTO_FEED || m.motion == LaneMotionState::pressure_ctrl_in_use) {
     // Standard rule: Nothing burns if no filament
     if (MC_ONLINE_key_stu[channel] == 0) {
       _hal->SetLED(channel, 0, 0, 0);
@@ -247,7 +236,6 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
     }
 
     // Region 2: Work Zone (tolerance to 0.30V) - Orange Strobe
-    // freq: 1Hz (at tol) to 15Hz (at 0.30V)
     float freq = 1.0f + (abs_error - tol) * (14.0f / (0.30f - tol));
     uint32_t period_ms = (uint32_t)(1000.0f / freq);
     bool blink_on = (_hal->GetTimeMS() / (period_ms / 2)) % 2 == 0;
@@ -260,8 +248,10 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
     return;
   }
 
-  // FTE Indication: Cyan Strobe (10Hz)
-  if (m.motion == filament_motion_enum::feed_to_extruder) {
+  // Active motion processes (manual moves, FTE, etc.): Cyan Strobe
+  if (m.motion != LaneMotionState::stop && 
+      m.motion != LaneMotionState::pressure_ctrl_idle && 
+      m.motion != LaneMotionState::pressure_ctrl_in_use) {
     bool blink_on = (_hal->GetTimeMS() / 50) % 2 == 0; // 10Hz
     if (blink_on) {
       _hal->SetLED(channel, 0, 255, 255);
@@ -277,13 +267,8 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
     _hal->SetLED(channel, 0, 0, 255);
   } else if (MC_PULL_stu[channel] == 0) {
     if (MC_ONLINE_key_stu[channel] == 1) {
-      FilamentState &f = data_save.filament[channel];
-      // If no color stored in flash (all zeros), default to white
-      if (f.color_R == 0 && f.color_G == 0 && f.color_B == 0) {
-        _hal->SetLED(channel, 255, 255, 255);
-      } else {
-        _hal->SetLED(channel, f.color_R, f.color_G, f.color_B);
-      }
+      // Idle presence: White
+      _hal->SetLED(channel, 255, 255, 255);
     } else {
       _hal->SetLED(channel, 0, 0, 0);
     }
@@ -295,9 +280,9 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
 
   // Auto-resume pressure control if enabled and idle
   if (m.SET_AUTO_FEED &&
-      (m.motion == filament_motion_enum::stop ||
-       m.motion == filament_motion_enum::pressure_ctrl_idle)) {
-    m.SetMotion(filament_motion_enum::pressure_ctrl_in_use);
+      (m.motion == LaneMotionState::stop ||
+       m.motion == LaneMotionState::pressure_ctrl_idle)) {
+    m.SetMotion(LaneMotionState::pressure_ctrl_in_use);
   }
 
   // Diagnostic Override
@@ -316,13 +301,13 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
   if (is_backing_out) {
     last_total_distance[CHx] += dist_step;
   }
-  if ((m.motion == filament_motion_enum::velocity_control ||
-       m.motion == filament_motion_enum::feed_to_extruder) &&
+  if ((m.motion == LaneMotionState::velocity_control ||
+       m.motion == LaneMotionState::feed_to_extruder) &&
       m.target_distance > 0) {
     m.accumulated_distance += dist_step;
-    if (m.motion == filament_motion_enum::velocity_control &&
+    if (m.motion == LaneMotionState::velocity_control &&
         m.accumulated_distance >= m.target_distance) {
-      m.SetMotion(filament_motion_enum::stop);
+      m.SetMotion(LaneMotionState::stop);
     }
   }
 
@@ -331,7 +316,7 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
   float x = 0;
 
   // Logic extraction from ControlLogic "Run" loop part
-  if (m.motion == filament_motion_enum::pressure_ctrl_idle) { // Idle
+  if (m.motion == LaneMotionState::pressure_ctrl_idle) { // Idle
     // Slider always active: no filament sensor guard
     if (m.pressure_ctrl == pressure_control_enum::reverse) {
       x = -m.PID_pressure.Calculate(
@@ -350,10 +335,10 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       m.PID_pressure.Clear();
     }
   } else if (MC_ONLINE_key_stu[CHx] != 0 ||
-             m.motion == filament_motion_enum::velocity_control ||
-             m.motion == filament_motion_enum::feed_to_extruder) {
+             m.motion == LaneMotionState::velocity_control ||
+             m.motion == LaneMotionState::feed_to_extruder) {
 
-    if (m.motion == filament_motion_enum::pressure_ctrl_in_use) {
+    if (m.motion == LaneMotionState::pressure_ctrl_in_use) {
       float zero = data_save.pressure_zero[CHx];
       float actual_offset = m.use_overflow ? data_save.pressure_offset : 0.0f;
       float target_zero = zero - actual_offset; 
@@ -394,13 +379,13 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
         }
       }
     } else {
-      if (m.motion == filament_motion_enum::stop) {
+      if (m.motion == LaneMotionState::stop) {
         m.PID_speed.Clear();
         _hal->SetMotorPower(CHx, 0);
         return;
       }
-      if (m.motion == filament_motion_enum::send) {
-        if (device_type_addr == BambuBus_AMS_lite) {
+      if (m.motion == LaneMotionState::send) {
+        if (is_two) {
           if (MC_PULL_stu_raw[CHx] < data_save.pressure_zero[CHx] + 0.05f)
             speed_set = MOTOR_SPEED_AMS_LITE_SEND;
           else
@@ -408,12 +393,12 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
         } else
           speed_set = MOTOR_SPEED_SEND;
       }
-      if (m.motion == filament_motion_enum::slow_send)
+      if (m.motion == LaneMotionState::slow_send)
         speed_set = MOTOR_SPEED_SLOW_SEND;
-      if (m.motion == filament_motion_enum::pull)
+      if (m.motion == LaneMotionState::pull)
         speed_set = -MOTOR_SPEED_PULL;
-      if (m.motion == filament_motion_enum::velocity_control ||
-          m.motion == filament_motion_enum::feed_to_extruder)
+      if (m.motion == LaneMotionState::velocity_control ||
+          m.motion == LaneMotionState::feed_to_extruder)
         speed_set = m.target_velocity;
 
       // Smooth Acceleration (Ramping)
@@ -432,13 +417,13 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       x = m.PID_speed.Calculate(error, time_E);
 
       // FTE Triggers
-      if (m.motion == filament_motion_enum::feed_to_extruder) {
+      if (m.motion == LaneMotionState::feed_to_extruder) {
         _fte.dist_moved = m.accumulated_distance;
 
         // Trigger 1: Pressure
         float pressure_delta = MC_PULL_stu_raw[CHx] - data_save.pressure_zero[CHx];
         if (pressure_delta > _fte.pressure_threshold) {
-          m.SetMotion(filament_motion_enum::stop);
+          m.SetMotion(LaneMotionState::stop);
           _fte.done = true; _fte.active = false;
           _fte.reason = StopReason::pressure;
           _hal->SetMotorPower(CHx, 0); return;
@@ -448,7 +433,7 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
         if (__builtin_fabsf(x) > 900 && __builtin_fabsf(now_speed) < 5.0f) {
           if (m.stall_timer == 0) m.stall_timer = _hal->GetTimeMS();
           if (_hal->GetTimeMS() - m.stall_timer > _fte.stall_ms) {
-            m.SetMotion(filament_motion_enum::stop);
+            m.SetMotion(LaneMotionState::stop);
             _fte.done = true; _fte.active = false;
             _fte.reason = StopReason::stall;
             _hal->SetMotorPower(CHx, 0); return;
@@ -457,7 +442,7 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
 
         // Trigger 3: Distance
         if (m.accumulated_distance >= _fte.max_mm) {
-          m.SetMotion(filament_motion_enum::stop);
+          m.SetMotion(LaneMotionState::stop);
           _fte.done = true; _fte.active = false;
           _fte.reason = StopReason::distance;
           _hal->SetMotorPower(CHx, 0); return;
@@ -465,15 +450,15 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       }
 
       // Normal Stall Detection (500ms)
-      if (m.motion != filament_motion_enum::feed_to_extruder &&
+      if (m.motion != LaneMotionState::feed_to_extruder &&
           __builtin_fabsf(x) > 900 && __builtin_fabsf(now_speed) < 5.0f) {
         if (m.stall_timer == 0)
           m.stall_timer = _hal->GetTimeMS();
         if (_hal->GetTimeMS() - m.stall_timer > 500) {
-          m.SetMotion(filament_motion_enum::stop);
+          m.SetMotion(LaneMotionState::stop);
           x = 0;
         }
-      } else if (m.motion != filament_motion_enum::feed_to_extruder) {
+      } else if (m.motion != LaneMotionState::feed_to_extruder) {
         m.stall_timer = 0;
       }
     }
@@ -502,7 +487,7 @@ bool MMU_Logic::Prepare_For_filament_Pull_Back(float OUT_filament_meters) {
   for (int i = 0; i < 4; i++) {
     if (filament_now_position[i] == filament_pulling_back) {
       if (last_total_distance[i] < OUT_filament_meters) {
-        motors[i].SetMotion(filament_motion_enum::pull);
+        motors[i].SetMotion(LaneMotionState::pull);
         // LED Logic
         float npercent =
             (last_total_distance[i] / OUT_filament_meters) * 100.0f;
@@ -518,9 +503,9 @@ bool MMU_Logic::Prepare_For_filament_Pull_Back(float OUT_filament_meters) {
         _hal->SetLED(i, r, g, b);
       } else {
         is_backing_out = false;
-        motors[i].SetMotion(filament_motion_enum::stop);
+        motors[i].SetMotion(LaneMotionState::stop);
         filament_now_position[i] = filament_idle;
-        data_save.filament[i].motion_set = AMS_filament_motion::idle;
+        data_save.lanes[i].motion_set = LaneMotionSet::idle;
         last_total_distance[i] = 0;
       }
       wait = true;
@@ -530,20 +515,20 @@ bool MMU_Logic::Prepare_For_filament_Pull_Back(float OUT_filament_meters) {
 }
 
 void MMU_Logic::motor_motion_switch() {
-  int num = data_save.BambuBus_now_filament_num;
+  int num = data_save.active_lane;
   // Logic mostly identical to before, updating member vars
 
   for (int i = 0; i < 4; i++) {
-    if (motors[i].motion == filament_motion_enum::velocity_control)
+    if (motors[i].motion == LaneMotionState::velocity_control)
       continue;
-    if (motors[i].motion == filament_motion_enum::pressure_ctrl_in_use)
+    if (motors[i].motion == LaneMotionState::pressure_ctrl_in_use)
       continue;
-    if (motors[i].motion == filament_motion_enum::feed_to_extruder)
+    if (motors[i].motion == LaneMotionState::feed_to_extruder)
       continue;
 
     if (i != num) {
       filament_now_position[i] = filament_idle;
-      motors[i].SetMotion(filament_motion_enum::pressure_ctrl_idle);
+      motors[i].SetMotion(LaneMotionState::pressure_ctrl_idle);
     } else {
       if (filament_now_position[num] == filament_unloading) {
         bool done = false;
@@ -556,7 +541,7 @@ void MMU_Logic::motor_motion_switch() {
         }
 
         if (done) {
-          motors[num].SetMotion(filament_motion_enum::stop);
+          motors[num].SetMotion(LaneMotionState::stop);
           motors[num].PID_speed.Clear();
           motors[num].accumulated_distance = 0;
           motors[num].current_velocity_set = 0;
@@ -569,7 +554,7 @@ void MMU_Logic::motor_motion_switch() {
       }
 
       if (MC_ONLINE_key_stu[num] > 0) {
-        AMS_filament_motion current_motion = data_save.filament[num].motion_set;
+        LaneMotionSet current_motion = data_save.lanes[num].motion_set;
 
         if (filament_now_position[num] == filament_loading) {
           float pressure = MC_PULL_stu_raw[num];
@@ -584,37 +569,37 @@ void MMU_Logic::motor_motion_switch() {
           if (pressure > zero + 0.20f) {
             filament_now_position[num] = filament_using;
             motors[num].pull_state_old = true;
-            motors[num].SetMotion(filament_motion_enum::pressure_ctrl_in_use);
+            motors[num].SetMotion(LaneMotionState::pressure_ctrl_in_use);
           } else if (dist_done) {
             filament_now_position[num] = filament_idle;
-            motors[num].SetMotion(filament_motion_enum::pressure_ctrl_idle);
+            motors[num].SetMotion(LaneMotionState::pressure_ctrl_idle);
             is_backing_out = false;
           } else if (pressure > zero + 0.05f) {
-            motors[num].SetMotion(filament_motion_enum::slow_send);
+            motors[num].SetMotion(LaneMotionState::slow_send);
           } else {
-            motors[num].SetMotion(filament_motion_enum::send);
+            motors[num].SetMotion(LaneMotionState::send);
           }
           return;
         }
 
         switch (current_motion) {
-        case AMS_filament_motion::need_send_out:
+        case LaneMotionSet::need_send_out:
           _hal->SetLED(num, 0, 255, 0);
           filament_now_position[num] = filament_sending_out;
-          motors[num].SetMotion(filament_motion_enum::send);
+          motors[num].SetMotion(LaneMotionState::send);
           break;
 
-        case AMS_filament_motion::need_pull_back:
+        case LaneMotionSet::need_pull_back:
           motors[num].pull_state_old = false;
           is_backing_out = true;
           filament_now_position[num] = filament_pulling_back;
-          if (device_type_addr == BambuBus_AMS_lite) {
-            motors[num].SetMotion(filament_motion_enum::pull);
+          if (is_two) {
+            motors[num].SetMotion(LaneMotionState::pull);
           }
           break;
 
-        case AMS_filament_motion::before_pull_back:
-        case AMS_filament_motion::in_use: {
+        case LaneMotionSet::before_pull_back:
+        case LaneMotionSet::in_use: {
           uint64_t time_now = get_time64();
 
           if (filament_now_position[num] == filament_sending_out) {
@@ -626,17 +611,17 @@ void MMU_Logic::motor_motion_switch() {
             last_total_distance[num] = 0; // Fix index i -> num
             if (time_now > _motion_switch_time_end) {
               _hal->SetLED(num, 255, 255, 255);
-              motors[num].SetMotion(filament_motion_enum::pressure_ctrl_in_use);
+              motors[num].SetMotion(LaneMotionState::pressure_ctrl_in_use);
             } else {
               _hal->SetLED(num, 128, 192, 128);
-              motors[num].SetMotion(filament_motion_enum::slow_send);
+              motors[num].SetMotion(LaneMotionState::slow_send);
             }
           }
           break;
         }
-        case AMS_filament_motion::idle:
+        case LaneMotionSet::idle:
           filament_now_position[num] = filament_idle;
-          motors[num].SetMotion(filament_motion_enum::pressure_ctrl_idle);
+          motors[num].SetMotion(LaneMotionState::pressure_ctrl_idle);
           break;
         }
       }
@@ -708,20 +693,18 @@ void MMU_Logic::MC_PULL_ONLINE_read() {
     pressure_filtered[i] = (raw_p * 0.4f) + (pressure_filtered[i] * 0.6f);
     MC_PULL_stu_raw[i] = pressure_filtered[i];
 
-    float raw_o = _hal->GetPresenceVoltage(i);
-    MC_ONLINE_key_stu_raw[i] = raw_o;
 
     bool present = _hal->GetFilamentPresence(i);
     MC_ONLINE_key_stu[i] = present ? 1 : 0;
 
     // Sync Filament Status for Bambu Protocol
     if (MC_ONLINE_key_stu[i] != 0) {
-      if (data_save.filament[i].status == AMS_filament_status::offline) {
-        data_save.filament[i].status = AMS_filament_status::online;
+      if (data_save.lanes[i].status == LanePresenceStatus::offline) {
+        data_save.lanes[i].status = LanePresenceStatus::online;
       }
     } else {
-      if (data_save.filament[i].status == AMS_filament_status::online) {
-        data_save.filament[i].status = AMS_filament_status::offline;
+      if (data_save.lanes[i].status == LanePresenceStatus::online) {
+        data_save.lanes[i].status = LanePresenceStatus::offline;
       }
     }
 
@@ -734,7 +717,7 @@ void MMU_Logic::MC_PULL_ONLINE_read() {
     else
       MC_PULL_stu[i] = 0;
 
-    data_save.filament[i].pressure = (uint16_t)(raw_p * 1000.0f);
+    data_save.lanes[i].pressure = (uint16_t)(raw_p * 1000.0f);
   }
 }
 
@@ -781,75 +764,13 @@ void MMU_Logic::SetRetractDeadzone(float deadzone) {
   SaveSettings();
 }
 
-// User Actions
-void MMU_Logic::SetFilamentInfoAction(int id, const FilamentInfo &info,
-                                      float meters) {
-  if (id < 0 || id >= 4)
-    return;
-  FilamentState &target = data_save.filament[id];
-
-  bool changed = false;
-
-  if (__builtin_memcmp(target.ID, info.ID, sizeof(target.ID)) != 0) {
-    __builtin_memcpy(target.ID, info.ID, sizeof(target.ID));
-    changed = true;
-  }
-
-  if (__builtin_memcmp(target.name, info.name, sizeof(target.name)) != 0) {
-    __builtin_memcpy(target.name, info.name, sizeof(target.name));
-    changed = true;
-  }
-
-  if (target.color_R != info.color_R || target.color_G != info.color_G ||
-      target.color_B != info.color_B || target.color_A != info.color_A) {
-    target.color_R = info.color_R;
-    target.color_G = info.color_G;
-    target.color_B = info.color_B;
-    target.color_A = info.color_A;
-    changed = true;
-  }
-
-  if (target.temperature_min != info.temperature_min ||
-      target.temperature_max != info.temperature_max) {
-    target.temperature_min = info.temperature_min;
-    target.temperature_max = info.temperature_max;
-    changed = true;
-  }
-
-  if (meters != target.meters) { // Only update if changed (ignoring previous
-                                 // >=0 check to allow clamping logic)
-    float valid_meters = meters;
-
-    // User requested: <0 = 0
-    if (valid_meters < 0.0f)
-      valid_meters = 0.0f;
-
-    // User requested: ceiling like 3000.0 (prevents integer overflow and
-    // nonsensical values)
-    if (valid_meters > 3000.0f)
-      valid_meters = 3000.0f;
-
-    if (target.meters != valid_meters) {
-      target.meters = valid_meters;
-      changed = true;
-    }
-  }
-
-  target.ID[7] = 0;
-  target.name[19] = 0;
-
-  if (changed) {
-    SetNeedToSave();
-  }
-}
 
 void MMU_Logic::StartLoadFilament(int tray, int length_mm) {
   if (tray < 0 || tray >= 4)
     return;
-  data_save.BambuBus_now_filament_num = tray;
-  data_save.filament_use_flag = 0x02;
+  data_save.active_lane = tray;
   filament_now_position[tray] = filament_loading;
-  motors[tray].SetMotion(filament_motion_enum::send);
+  motors[tray].SetMotion(LaneMotionState::send);
   unload_target_dist[tray] = length_mm;
   if (length_mm > 0) {
     last_total_distance[tray] = 0;
@@ -860,7 +781,7 @@ void MMU_Logic::StartLoadFilament(int tray, int length_mm) {
   for (int i = 0; i < 4; i++) {
     if (i != tray) {
       filament_now_position[i] = filament_idle;
-      motors[i].SetMotion(filament_motion_enum::pressure_ctrl_idle);
+      motors[i].SetMotion(LaneMotionState::pressure_ctrl_idle);
     }
   }
 }
@@ -868,10 +789,9 @@ void MMU_Logic::StartLoadFilament(int tray, int length_mm) {
 void MMU_Logic::StartUnloadFilament(int tray, int length_mm) {
   if (tray < 0 || tray >= 4)
     return;
-  data_save.BambuBus_now_filament_num = tray;
-  data_save.filament_use_flag = 0x02;
+  data_save.active_lane = tray;
   filament_now_position[tray] = filament_unloading;
-  motors[tray].SetMotion(filament_motion_enum::pull);
+  motors[tray].SetMotion(LaneMotionState::pull);
   unload_target_dist[tray] = length_mm;
   unload_start_meters[tray] = last_total_distance[tray];
   is_backing_out = true;
@@ -879,7 +799,7 @@ void MMU_Logic::StartUnloadFilament(int tray, int length_mm) {
   for (int i = 0; i < 4; i++) {
     if (i != tray) {
       filament_now_position[i] = filament_idle;
-      motors[i].SetMotion(filament_motion_enum::pressure_ctrl_idle);
+      motors[i].SetMotion(LaneMotionState::pressure_ctrl_idle);
     }
   }
 }
@@ -890,21 +810,21 @@ void MMU_Logic::MoveAxis(int axis, float dist_mm, float speed) {
   motors[axis].target_velocity =
       (dist_mm >= 0) ? __builtin_fabsf(speed) : -__builtin_fabsf(speed);
   motors[axis].target_distance = __builtin_fabsf(dist_mm);
-  motors[axis].SetMotion(filament_motion_enum::velocity_control);
+  motors[axis].SetMotion(LaneMotionState::velocity_control);
 }
 
 void MMU_Logic::StopAll() {
   for (int i = 0; i < 4; i++) {
     motors[i].SET_AUTO_FEED = false;
-    motors[i].SetMotion(filament_motion_enum::stop);
+    motors[i].SetMotion(LaneMotionState::stop);
     filament_now_position[i] = filament_idle;
   }
   _fte.active = false;
 }
 
-void MMU_Logic::SetCurrentFilamentIndex(int index) {
+void MMU_Logic::SetActiveLaneIndex(int index) {
   if (index >= 0 && index < 4) {
-    data_save.BambuBus_now_filament_num = index;
+    data_save.active_lane = index;
   }
 }
 
@@ -914,8 +834,8 @@ void MMU_Logic::SetAutoFeed(int lane, bool enable, bool overflow) {
     for(int i=0; i<4; i++) {
         motors[i].SET_AUTO_FEED = enable;
         motors[i].use_overflow = overflow;
-        if (enable) motors[i].SetMotion(filament_motion_enum::pressure_ctrl_in_use);
-        else motors[i].SetMotion(filament_motion_enum::pressure_ctrl_idle);
+        if (enable) motors[i].SetMotion(LaneMotionState::pressure_ctrl_in_use);
+        else motors[i].SetMotion(LaneMotionState::pressure_ctrl_idle);
     }
     return;
   }
@@ -924,9 +844,9 @@ void MMU_Logic::SetAutoFeed(int lane, bool enable, bool overflow) {
   motors[lane].SET_AUTO_FEED = enable;
   motors[lane].use_overflow = overflow;
   if (enable) {
-    motors[lane].SetMotion(filament_motion_enum::pressure_ctrl_in_use);
+    motors[lane].SetMotion(LaneMotionState::pressure_ctrl_in_use);
   } else {
-    motors[lane].SetMotion(filament_motion_enum::pressure_ctrl_idle);
+    motors[lane].SetMotion(LaneMotionState::pressure_ctrl_idle);
   }
 }
 
@@ -945,26 +865,15 @@ int MMU_Logic::GetLaneMotion(int lane) {
   return (int)motors[lane].motion;
 }
 
-FilamentState &MMU_Logic::GetFilament(int index) {
+LaneState &MMU_Logic::GetLane(int index) {
   if (index < 0 || index >= 4)
-    return data_save.filament[0];
-  return data_save.filament[index];
+    return data_save.lanes[0];
+  return data_save.lanes[index];
 }
 
-void MMU_Logic::DiagnosticMotorControl(int lane, int pwm,
-                                       uint32_t duration_ms) {
-  if (lane < 0 || lane >= 4)
-    return;
-  diag_pwm[lane] = pwm;
-  diag_end_time[lane] = _hal->GetTimeMS() + duration_ms;
-  diag_active[lane] = true;
+int MMU_Logic::GetActiveLaneIndex() {
+  return data_save.active_lane;
 }
-
-int MMU_Logic::GetCurrentFilamentIndex() {
-  return data_save.BambuBus_now_filament_num;
-}
-
-uint16_t MMU_Logic::GetDeviceType() { return device_type_addr; }
 
 float MMU_Logic::GetPressureZero(int lane) {
   if (lane < 0 || lane >= 4)
@@ -1039,7 +948,7 @@ void MMU_Logic::StartFeedToExtruder(int lane, float speed, float max_mm,
     motors[lane].stall_timer = 0;
     motors[lane].target_velocity = __builtin_fabsf(speed);
     motors[lane].target_distance = max_mm;
-    motors[lane].SetMotion(filament_motion_enum::feed_to_extruder);
+    motors[lane].SetMotion(LaneMotionState::feed_to_extruder);
 }
 
 MMU_Logic::StopReason MMU_Logic::GetFTEResult(float &dist_moved_mm) {
@@ -1052,4 +961,10 @@ void MMU_Logic::ClearFTEResult() {
     _fte.done = false;
     _fte.reason = StopReason::none;
 }
-
+void MMU_Logic::DiagnosticMotorControl(int lane, int pwm, uint32_t duration_ms) {
+    if (lane < 0 || lane >= 4) return;
+    diag_active[lane] = true;
+    diag_pwm[lane] = pwm;
+    diag_end_time[lane] = _hal->GetTimeMS() + duration_ms;
+    motors[lane].SetMotion(LaneMotionState::stop); 
+}

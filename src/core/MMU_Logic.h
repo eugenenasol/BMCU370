@@ -9,7 +9,7 @@ class I_MMU_Hardware;
 
 // --- Internal Configuration Constants ---
 // (Could be moved to a config file)
-#define STRUCT_VERSION 14
+#define STRUCT_VERSION 15
 #define MOTOR_SPEED_SEND 1500
 #define MOTOR_SPEED_AMS_LITE_SEND 1000
 #define MOTOR_SPEED_SLOW_SEND 800
@@ -60,7 +60,7 @@ public:
   }
 };
 
-enum class filament_motion_enum {
+enum class LaneMotionState {
   stop,
   send,
   pull,
@@ -93,7 +93,7 @@ enum class pressure_control_enum { less_pressure, all, over_pressure, reverse };
 class MotorChannel {
 public:
   int CHx;
-  filament_motion_enum motion = filament_motion_enum::stop;
+  LaneMotionState motion = LaneMotionState::stop;
   uint64_t motor_stop_time = 0;
   pressure_control_enum pressure_ctrl = pressure_control_enum::all;
   MOTOR_PID PID_speed;
@@ -122,7 +122,7 @@ public:
     PID_pressure.Init(1500, 0, 0);
   }
 
-  void SetMotion(filament_motion_enum m) {
+  void SetMotion(LaneMotionState m) {
     if (motion != m) {
       motion = m;
       PID_speed.Clear();
@@ -147,7 +147,7 @@ public:
   // here.
 };
 
-enum filament_now_position_enum {
+enum LanePositionState {
   filament_idle,
   filament_sending_out,
   filament_using,
@@ -158,10 +158,8 @@ enum filament_now_position_enum {
 };
 
 struct alignas(4) flash_save_struct {
-  FilamentState filament[4];
-  int BambuBus_now_filament_num = 0;
-  uint8_t filament_use_flag = 0x00;
-  uint32_t boot_mode = 1; // Default Klipper
+  LaneState lanes[4];
+  int active_lane = 0;
   uint32_t version = STRUCT_VERSION;
   uint32_t check = 0x40614061;
   float pressure_zero[4];
@@ -203,12 +201,10 @@ public:
   void UpdateConnectivity(bool online);
 
   // Actions
-  void SetFilamentInfoAction(int id, const FilamentInfo &info,
-                             float meters = -1.0f);
   void StartLoadFilament(int tray, int length_mm = -1);
   void StartUnloadFilament(int tray, int length_mm = -1);
   void SetAutoFeed(int lane, bool enable, bool overflow = false);
-  void SetCurrentFilamentIndex(int index);
+  void SetActiveLaneIndex(int index);
   CalibrateResult CalibratePressure(int lane);
 
   // FTE Command
@@ -233,19 +229,9 @@ public:
   bool IsDiagnosticActive(int lane) {
     return (lane >= 0 && lane < 4) ? diag_active[lane] : false;
   }
-  int32_t GetRawEncoder(int lane) {
-    return (lane >= 0 && lane < 4) ? as5600_distance_save[lane] : 0;
-  }
-  float GetRawPressure(int lane) {
-    return (lane >= 0 && lane < 4) ? MC_PULL_stu_raw[lane] : 0.0f;
-  }
-  float GetRawOnline(int lane) {
-    return (lane >= 0 && lane < 4) ? MC_ONLINE_key_stu_raw[lane] : 0.0f;
-  }
   // Accessors (Replacement for UnitState)
-  FilamentState &GetFilament(int index);
-  int GetCurrentFilamentIndex();
-  uint16_t GetDeviceType();
+  LaneState &GetLane(int index);
+  int GetActiveLaneIndex();
   float GetPressureZero(int lane);
   float GetPressureTolerance() { return data_save.pressure_tolerance; }
   void SetPressureTolerance(float tol);
@@ -285,13 +271,12 @@ private:
   FeedToExtruderState _fte;
 
 
-  filament_now_position_enum filament_now_position[4];
+  LanePositionState filament_now_position[4];
 
   // Sensor Cache
   float speed_as5600[4];
   float MC_PULL_stu_raw[4];
   int MC_PULL_stu[4];
-  float MC_ONLINE_key_stu_raw[4];
   int MC_ONLINE_key_stu[4];
   float pressure_filtered[4];
   float as5600_delta_mm[4];

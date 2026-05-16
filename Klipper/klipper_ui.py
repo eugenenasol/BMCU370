@@ -30,12 +30,8 @@ class BMCUKlipperUI:
         self.lane_vars = [] 
         for i in range(4):
             self.lane_vars.append({
-                'name': tk.StringVar(value=f"Lane {i+1}"),
-                'color': tk.StringVar(value="#FFFFFF"),
-                'temp': tk.StringVar(value="--/--"),
                 'status': tk.StringVar(value="Idle"),
                 'presence': tk.StringVar(value="Empty"),
-                'rfid': tk.StringVar(value=""),
                 'meters': tk.StringVar(value="0.0 m")
             })
 
@@ -115,26 +111,9 @@ class BMCUKlipperUI:
         
         vars = self.lane_vars[lane_idx]
         
-        # Filament Info
-        info_frame = ttk.Frame(card)
-        info_frame.pack(fill=tk.X, pady=5)
-        
-        # Color Box
-        self.color_box = tk.Label(info_frame, bg="white", width=4, relief="solid")
-        self.color_box.pack(side=tk.LEFT, padx=5)
-        # Store widget ref to update color later logic
-        vars['color_widget'] = self.color_box 
-        
-        ttk.Label(info_frame, textvariable=vars['name'], font=('Arial', 10, 'bold')).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        ttk.Label(card, textvariable=vars['rfid'], font=('Arial', 8)).pack(pady=1)
         ttk.Label(card, textvariable=vars['meters']).pack(pady=1)
-        ttk.Label(card, textvariable=vars['temp'], borderwidth=1).pack(pady=2)
         ttk.Label(card, textvariable=vars['presence'], foreground="blue").pack(pady=2)
         ttk.Label(card, textvariable=vars['status']).pack(pady=2)
-        
-        # Edit Button
-        ttk.Button(card, text="Edit Filament", command=lambda i=lane_idx: self.edit_filament(i)).pack(fill=tk.X, pady=2)
         
         # Controls
         ctrl_frame = ttk.Frame(card)
@@ -222,29 +201,9 @@ class BMCUKlipperUI:
             self.disconnect()
         return None
 
-    def refresh_all_filaments(self):
-        for i in range(4):
-            self.get_filament_info(i)
-
-    def get_filament_info(self, lane):
-        resp = self.send_pkt("GET_FILAMENT_INFO", {"lane": lane}, wait_response=True)
-        if resp and resp.get("ok"):
-            info = resp.get("info", {})
-            vars = self.lane_vars[lane]
-            
-            vars['name'].set(info.get("name", "Unknown"))
-            tmin = info.get("temp_min", 0)
-            tmax = info.get("temp_max", 0)
-            vars['temp'].set(f"{tmin}-{tmax}°C")
-            
-            c = info.get("color", [255, 255, 255])
-            if len(c) >= 3:
-                hex_col = "#{:02x}{:02x}{:02x}".format(c[0], c[1], c[2])
-                vars['color'].set(hex_col)
-                vars['color_widget'].config(bg=hex_col)
-            
-            vars['rfid'].set(info.get("id_str", ""))
-            vars['meters'].set(f"{info.get('meters', 0.0):.1f} m")
+                            vars['presence'].set("Filament!" if l.get('present') else "Empty")
+                            vars['status'].set(l.get('motion', 'Idle'))
+                            vars['meters'].set(f"{l.get('meters', 0.0):.1f} m")
 
     def poll_loop(self):
         while not self.stop_thread:
@@ -264,24 +223,6 @@ class BMCUKlipperUI:
                             vars['rfid'].set(l.get('rfid', ''))
                             vars['meters'].set(f"{l.get('meters', 0.0):.1f} m")
                             
-                            vars['name'].set(l.get('name', f"Lane {i+1}"))
-                            
-                            t_min = l.get('temp_min', 0)
-                            t_max = l.get('temp_max', 0)
-                            vars['temp'].set(f"{t_min}/{t_max}")
-                            
-                            # Color handling (Array [r,g,b,a] -> Hex)
-                            c_arr = l.get('color')
-                            if c_arr and isinstance(c_arr, list) and len(c_arr) >= 3:
-                                r,g,b = c_arr[0], c_arr[1], c_arr[2]
-                                hex_col = f"#{r:02x}{g:02x}{b:02x}"
-                                vars['color'].set(hex_col)
-                                # Update widget background
-                                if 'color_widget' in vars:
-                                    try:
-                                        vars['color_widget'].config(bg=hex_col)
-                                    except:
-                                        pass
                                 
                             # Auto Feed State Visualization
                             if l.get('motion') == "AutoFeed":
@@ -293,94 +234,6 @@ class BMCUKlipperUI:
                 # 0.5 Hz Poll (2 second interval to prevent UART overflow)
             time.sleep(2)
 
-    def edit_filament(self, lane):
-        if not self.is_connected: return
-        
-        # Simple Dialog
-        win = tk.Toplevel(self.root)
-        win.title(f"Edit Lane {lane+1}")
-        
-        vars = self.lane_vars[lane]
-        
-        tk.Label(win, text="Name:").grid(row=0, column=0)
-        name_entry = tk.Entry(win)
-        name_entry.insert(0, vars['name'].get())
-        name_entry.grid(row=0, column=1)
-        
-        tk.Label(win, text="Temp Min:").grid(row=1, column=0, padx=5, pady=5)
-        min_entry = tk.Entry(win)
-        # Parse "min/max" string safely
-        temp_str = vars['temp'].get()
-        t_min = "220"
-        t_max = "240"
-        if "/" in temp_str:
-            parts = temp_str.split('/')
-            if len(parts) >= 2:
-                t_min = parts[0]
-                t_max = parts[1].replace('°C','')
-        elif "-" in temp_str: # Legacy fallback
-             parts = temp_str.split('-')
-             if len(parts) >= 2:
-                t_min = parts[0]
-                t_max = parts[1].replace('°C','')
-                
-        min_entry.insert(0, t_min)
-        min_entry.grid(row=1, column=1, padx=5, pady=5)
-
-        tk.Label(win, text="Temp Max:").grid(row=2, column=0, padx=5, pady=5)
-        max_entry = tk.Entry(win)
-        max_entry.insert(0, t_max)
-        max_entry.grid(row=2, column=1, padx=5, pady=5)
-        
-        tk.Label(win, text="RFID:").grid(row=3, column=0, padx=5, pady=5)
-        rfid_entry = tk.Entry(win)
-        rfid_entry.insert(0, vars['rfid'].get())
-        rfid_entry.grid(row=3, column=1, padx=5, pady=5)
-
-        tk.Label(win, text="Meters:").grid(row=4, column=0, padx=5, pady=5)
-        meter_entry = tk.Entry(win)
-        meter_entry.insert(0, vars['meters'].get().replace(' m',''))
-        meter_entry.grid(row=4, column=1, padx=5, pady=5)
-        
-        col_btn = tk.Button(win, text="Pick Color", command=lambda: self.pick_color(win))
-        col_btn.grid(row=5, column=0, columnspan=2)
-        
-        self.temp_color = None
-        
-        def save():
-            name = name_entry.get()
-            tmin = int(min_entry.get())
-            tmax = int(max_entry.get())
-            rfid = rfid_entry.get()
-            try:
-                meters = float(meter_entry.get())
-            except:
-                meters = 0
-            
-            args = {
-                "lane": lane,
-                "name": name,
-                "temp_min": tmin,
-                "temp_max": tmax,
-                "id_str": rfid,
-                "meters": meters
-            }
-            if hasattr(self, 'temp_color') and self.temp_color:
-                args['color'] = self.temp_color
-                
-            # Wait for response so we consume the OK packet before requesting info
-            self.send_pkt("SET_FILAMENT_INFO", args, wait_response=True)
-            self.get_filament_info(lane) # Refresh
-            win.destroy()
-            
-        tk.Button(win, text="Save", command=save).grid(row=6, column=0, columnspan=2)
-
-    def pick_color(self, parent):
-        color = colorchooser.askcolor(title="Choose color", parent=parent)
-        if color[0]:
-            # color is ((r, g, b), '#hex')
-            rgb = [int(x) for x in color[0]]
-            self.temp_color = rgb
             
     def feed_lane(self, lane):
         speed = 10.0 if self.move_speed_var.get() == "Slow" else 30.0

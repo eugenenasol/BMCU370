@@ -20,7 +20,7 @@
 #
 # Firmware surface (per KlipperCLI.cpp with LiteJSON):
 #   PING, STATUS, GET_SENSORS, MOVE, STOP, SELECT_LANE,
-#   SET_AUTO_FEED, GET_FILAMENT_INFO, SET_FILAMENT_INFO
+#   SET_AUTO_FEED
 #
 # LiteJSON Firmware Limits:
 #   - MAX_KEYS = 8 (max key-value pairs per JSON object)
@@ -173,10 +173,6 @@ class BMCU:
         gc.register_command("BMCU_SET_AUTO_FEED", self.cmd_BMCU_SET_AUTO_FEED)
         gc.register_command("BMCU_MOVE", self.cmd_BMCU_MOVE)
         gc.register_command("BMCU_FEED", self.cmd_BMCU_FEED)
-        gc.register_command("BMCU_SELECTOR", self.cmd_BMCU_SELECTOR)
-        gc.register_command("BMCU_SPOOL", self.cmd_BMCU_SPOOL)
-        gc.register_command("BMCU_GET_FILAMENT_INFO", self.cmd_BMCU_GET_FILAMENT_INFO)
-        gc.register_command("BMCU_SET_FILAMENT_INFO", self.cmd_BMCU_SET_FILAMENT_INFO)
         gc.register_command("BMCU_CALL", self.cmd_BMCU_CALL)
         gc.register_command("BMCU_LANE_FEED", self.cmd_BMCU_LANE_FEED)
         gc.register_command("BMCU_LANE_RETRACT", self.cmd_BMCU_LANE_RETRACT)
@@ -629,112 +625,6 @@ class BMCU:
             {"axis": "FEED", "dist_mm": float(mm), "speed": float(speed)}, note="feed")
         gcmd.respond_info(f"FEED {mm}mm @ {speed}")
 
-    def cmd_BMCU_SELECTOR(self, gcmd):
-        mm = gcmd.get_float("MM", 10.0)
-        speed = gcmd.get_float("SPEED", self.default_speed)
-        ok, pkt_id = self._send_pkt(
-            "MOVE",
-            {"axis": "SELECTOR", "dist_mm": float(mm), "speed": float(speed)}, note="selector")
-        gcmd.respond_info(f"SELECTOR: {mm}mm")
-
-    def cmd_BMCU_SPOOL(self, gcmd):
-        lane = gcmd.get_int("LANE", 0)
-        mm = gcmd.get_float("MM", 20.0)
-        speed = gcmd.get_float("SPEED", self.default_speed)
-        axis = f"SPOOL{lane}"
-        ok, pkt_id = self._send_pkt(
-            "MOVE",
-            {"axis": axis, "dist_mm": float(mm), "speed": float(speed)}, note="spool")
-        gcmd.respond_info(f"SPOOL lane={lane} mm={mm}")
-
-    def cmd_BMCU_GET_FILAMENT_INFO(self, gcmd):
-        lane = gcmd.get_int("LANE", 0)
-        ok, pkt_id = self._send_pkt("GET_FILAMENT_INFO", {"lane": lane}, note="get_fil_info")
-        gcmd.respond_info(f"GET_FILAMENT_INFO lane={lane}")
-
-    def cmd_BMCU_SET_FILAMENT_INFO(self, gcmd):
-        lane = gcmd.get_int("LANE", 0)
-        name = gcmd.get("NAME", None)
-        tmin_raw = gcmd.get("TEMP_MIN", None)
-        tmax_raw = gcmd.get("TEMP_MAX", None)
-        rfid = gcmd.get("ID", None) or gcmd.get("RFID", None)
-        meters_raw = gcmd.get("METERS", None)
-        color_hex = gcmd.get("COLOR", None)
-        color_hex_plain = gcmd.get("COLOR_HEX", None)
-        color_r = gcmd.get("COLOR_R", None)
-        color_g = gcmd.get("COLOR_G", None)
-        color_b = gcmd.get("COLOR_B", None)
-
-        args = {"lane": lane}
-
-        if name is not None:
-            # LiteJSON MAX_STRING_LEN = 32, but firmware name field is 20 chars
-            args["name"] = str(name)[:20]
-
-        if tmin_raw is not None:
-            args["temp_min"] = int(float(tmin_raw))
-
-        if tmax_raw is not None:
-            args["temp_max"] = int(float(tmax_raw))
-
-        if rfid:
-            # Firmware expects id_str, max 8 chars for RFID
-            s = str(rfid)[:8]
-            args["id_str"] = s
-
-        if meters_raw is not None:
-            meters_val = float(meters_raw)
-            if meters_val >= 0:
-                args["meters"] = meters_val
-
-        color = None
-        # Prefer explicit component params if provided
-        try:
-            if color_r is not None or color_g is not None or color_b is not None:
-                r = self._clamp(int(float(color_r or 0)), 0, 255)
-                g = self._clamp(int(float(color_g or 0)), 0, 255)
-                b = self._clamp(int(float(color_b or 0)), 0, 255)
-                color = [r, g, b, 255]
-        except Exception:
-            pass
-
-        # Otherwise fall back to hex (with or without a leading #)
-        if color is None and isinstance(color_hex, str):
-            hex_str = color_hex.strip()
-            if hex_str.startswith("#"):
-                hex_str = hex_str[1:]
-            if len(hex_str) == 6:
-                try:
-                    r = int(hex_str[0:2], 16)
-                    g = int(hex_str[2:4], 16)
-                    b = int(hex_str[4:6], 16)
-                    color = [r, g, b, 255]
-                except Exception:
-                    color = None
-
-        if color is None and isinstance(color_hex_plain, str):
-            hex_str = color_hex_plain.strip().lstrip("#")
-            if len(hex_str) == 6:
-                try:
-                    r = int(hex_str[0:2], 16)
-                    g = int(hex_str[2:4], 16)
-                    b = int(hex_str[4:6], 16)
-                    color = [r, g, b, 255]
-                except Exception:
-                    color = None
-
-        # Or keep the existing lane color if known
-        if color is None and self.lanes:
-            for ln in self.lanes:
-                if ln.get("id") == lane and "color" in ln:
-                    color = ln["color"]
-                    break
-
-        if color is not None:
-            args["color"] = color
-
-        ok, pkt_id = self._send_pkt("SET_FILAMENT_INFO", args, note="set_filament")
-        gcmd.respond_info(f"SET_FILAMENT_INFO lane={lane} ok={ok} id={pkt_id}")
 
 
     def cmd_BMCU_CALL(self, gcmd):

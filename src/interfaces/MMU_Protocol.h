@@ -37,8 +37,6 @@ enum class Command : uint8_t {
     SELECT_LANE = 0x20,  ///< Select active lane for operations
     
     // Configuration
-    SET_FILAMENT_INFO = 0x30,  ///< Set filament metadata
-    GET_FILAMENT_INFO = 0x31,  ///< Get filament metadata
     SET_CONFIG        = 0x32,  ///< Set configuration parameter
     GET_CONFIG        = 0x33,  ///< Get configuration parameter
 };
@@ -87,8 +85,6 @@ namespace CommandStr {
     constexpr const char* LOAD            = "LOAD_FILAMENT";
     constexpr const char* UNLOAD          = "UNLOAD_FILAMENT";
     constexpr const char* SELECT_LANE     = "SELECT_LANE";
-    constexpr const char* SET_FILAMENT_INFO = "SET_FILAMENT_INFO";
-    constexpr const char* GET_FILAMENT_INFO = "GET_FILAMENT_INFO";
 }
 
 //=============================================================================
@@ -104,15 +100,6 @@ struct LaneStatus {
     const char* motion;   ///< Motion state string
     float meters;         ///< Filament length remaining (meters)
     float pressure;       ///< Pressure sensor reading (volts)
-    
-    // Filament info
-    const char* name;     ///< Filament name
-    const char* filament_id; ///< Filament ID/RFID
-    uint8_t color_r;      ///< Color RED
-    uint8_t color_g;      ///< Color GREEN
-    uint8_t color_b;      ///< Color BLUE
-    uint16_t temp_min;    ///< Min print temperature
-    uint16_t temp_max;    ///< Max print temperature
 };
 
 //=============================================================================

@@ -29,7 +29,6 @@ namespace KlipperCLI {
     static JsonDocument doc;
     static char global_json_buf[2048]; // Shared buffer for all responses
     static uint64_t last_activity_time = 0; // Track last serial activity for smart save timing
-    static uint64_t last_diag_broadcast = 0;
     static uint64_t last_fte_check = 0;
 
     // Pointer to track which transport received the request currently being processed
@@ -120,31 +119,8 @@ namespace KlipperCLI {
                 default: m_str = "Idle"; break;
             }
             
-            FilamentState &f = _mmu->GetFilament(i);
+            LaneState &f = _mmu->GetLane(i);
             
-            // Sanitize strings - replace non-printable chars with null terminator
-            char safe_id[9]; 
-            for(int j=0; j<8; j++) {
-                safe_id[j] = (f.ID[j] >= 32 && f.ID[j] < 127) ? f.ID[j] : '\0';
-                if(safe_id[j] == '\0') { safe_id[j] = '\0'; break; } // Stop at first non-printable
-            }
-            safe_id[8] = '\0';
-            
-            char safe_name[21];
-            for(int j=0; j<20; j++) {
-                safe_name[j] = (f.name[j] >= 32 && f.name[j] < 127) ? f.name[j] : '\0';
-                if(safe_name[j] == '\0') break;
-            }
-            safe_name[20] = '\0';
-            
-            // Escape JSON-breaking characters
-            for(int j=0; j<20 && safe_name[j]; j++) {
-                if(safe_name[j] == '"' || safe_name[j] == '\\') safe_name[j] = '\'';
-            }
-            for(int j=0; j<8 && safe_id[j]; j++) {
-                if(safe_id[j] == '"' || safe_id[j] == '\\') safe_id[j] = '\'';
-            }
-
              float meters_f = f.meters;
              if (!isfinite(meters_f)) meters_f = 0;
              if (meters_f > 2000000000.0f) meters_f = 2000000000.0f;
@@ -162,7 +138,7 @@ namespace KlipperCLI {
              int p_zero_dec = (int)((p_zero_f - p_zero_int) * 1000);
              if (p_zero_dec < 0) p_zero_dec = -p_zero_dec;
             
-             if (offset >= (int)sizeof(global_json_buf) - 256) {
+             if (offset >= (int)sizeof(global_json_buf) - 128) {
                  // Danger zone: not enough space for a full lane record
                  break; 
              }
@@ -171,17 +147,14 @@ namespace KlipperCLI {
              const char* sign = (meters_f < 0 && m_int == 0) ? "-" : "";
 
              int n = snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, 
-                 "{\"id\":%d,\"present\":%s,\"motion\":\"%s\",\"autofeed\":%s,\"overflow\":%s,\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"raw_pressure\":%d.%03d,\"raw_online\":%d.%03d,\"raw_enc\":%d,\"pressure_zero\":%d.%03d,\"rfid\":\"%s\",\"name\":\"%s\",\"temp_min\":%d,\"temp_max\":%d,\"color\":[%d,%d,%d,%d]}",
+                 "{\"id\":%d,\"present\":%s,\"motion\":\"%s\",\"autofeed\":%s,\"overflow\":%s,\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"pressure_zero\":%d.%03d}",
                  i, 
                  (sensors & (1<<i)) ? "true" : "false",
                  m_str,
                  _mmu->GetLaneAutoFeed(i) ? "true" : "false",
                  _mmu->GetLaneOverflow(i) ? "true" : "false",
                  sign, m_int, m_dec, p_int, p_dec, 
-                 (int)_mmu->GetRawPressure(i), (int)(_mmu->GetRawPressure(i) * 1000) % 1000,
-                 (int)_mmu->GetRawOnline(i), (int)(_mmu->GetRawOnline(i) * 1000) % 1000,
-                 (int)_mmu->GetRawEncoder(i),
-                p_zero_int, p_zero_dec, safe_id, safe_name, f.temperature_min, f.temperature_max, f.color_R, f.color_G, f.color_B, f.color_A);
+                 p_zero_int, p_zero_dec);
              
              if (n > 0) {
                  if (offset + n >= (int)sizeof(global_json_buf)) {
@@ -268,7 +241,7 @@ namespace KlipperCLI {
         
         int motor_idx = -1;
         if(strcmp(axis, "FEED") == 0) {
-            motor_idx = _mmu->GetCurrentFilamentIndex();
+            motor_idx = _mmu->GetActiveLaneIndex();
         } else if(strcmp(axis, "SELECTOR") == 0) {
         } else if (isdigit(axis[0])) {
              motor_idx = atoi(axis);
@@ -300,7 +273,7 @@ namespace KlipperCLI {
             return;
         }
         
-        _mmu->SetCurrentFilamentIndex(lane);
+        _mmu->SetActiveLaneIndex(lane);
         SendOk(id);
     }
 
@@ -347,108 +320,6 @@ namespace KlipperCLI {
         SendOk(id, "STARTED", "Diagnostic started");
     }
 
-    void HandleGetFilamentInfo(int id, JsonObject args) {
-         if (!_mmu) return;
-         if(!args["lane"].isInt()) { SendError(id, "BAD_ARGS", "Missing lane"); return; }
-         int lane = args["lane"];
-         if(lane < 0 || lane >= 4) { SendError(id, "BAD_ARGS", "Invalid lane"); return; }
-         
-         FilamentState &f = _mmu->GetFilament(lane);
-         
-         // Sanitize strings - replace non-printable chars with null terminator
-         char safe_id[9]; 
-         for(int j=0; j<8; j++) {
-             safe_id[j] = (f.ID[j] >= 32 && f.ID[j] < 127) ? f.ID[j] : '\0';
-             if(safe_id[j] == '\0') break;
-         }
-         safe_id[8] = '\0';
-         
-         char safe_name[21];
-         for(int j=0; j<20; j++) {
-             safe_name[j] = (f.name[j] >= 32 && f.name[j] < 127) ? f.name[j] : '\0';
-             if(safe_name[j] == '\0') break;
-         }
-         safe_name[20] = '\0';
-
-        // Escape JSON-breaking characters
-        for(int j=0; j<20 && safe_name[j]; j++) {
-            if(safe_name[j] == '"' || safe_name[j] == '\\') safe_name[j] = '\'';
-        }
-        for(int j=0; j<8 && safe_id[j]; j++) {
-            if(safe_id[j] == '"' || safe_id[j] == '\\') safe_id[j] = '\'';
-        }
-
-        float meters_f = f.meters;
-         if (!isfinite(meters_f)) meters_f = 0;
-         if (meters_f > 2000000000.0f) meters_f = 2000000000.0f;
-         if (meters_f < -2000000000.0f) meters_f = -2000000000.0f;
-
-         int m_int = (int)meters_f;
-         int m_dec = (int)((meters_f - m_int) * 100);
-         if(m_dec < 0) m_dec = -m_dec;
-         int p_int = f.pressure / 1000;
-         int p_dec = f.pressure % 1000;
-
-         WaitTX();
-         // Precision Fix: Handle negative sign for meters between -1.0 and 0.0
-         const char* sign = (meters_f < 0 && m_int == 0) ? "-" : "";
-
-         int len = snprintf(global_json_buf, sizeof(global_json_buf), 
-            "{\"id\":%d,\"cmd\":\"GET_FILAMENT_INFO\",\"ok\":true,\"lane\":%d,\"meters\":%s%d.%02d,\"pressure\":%d.%03d,\"rfid\":\"%s\",\"name\":\"%s\",\"temp_min\":%d,\"temp_max\":%d,\"color\":[%d,%d,%d,%d]}\r\n",
-            id, lane, sign, m_int, m_dec, p_int, p_dec, safe_id, safe_name, f.temperature_min, f.temperature_max, f.color_R, f.color_G, f.color_B, f.color_A
-         );
-         
-         if (len < 0 || len >= (int)sizeof(global_json_buf)) {
-             SendError(id, "BUFFER_OVERFLOW", "Response too large");
-             return;
-         }
-         
-         if (_transport) _transport->Write((const uint8_t*)global_json_buf, len);
-    }
-
-    void HandleSetFilamentInfo(int id, JsonObject args) {
-         if (!_mmu) return;
-         if(!args["lane"].isInt()) { SendError(id, "BAD_ARGS", "Missing lane"); return; }
-         int lane = args["lane"];
-         
-         FilamentInfo info;
-         FilamentState &current = _mmu->GetFilament(lane);
-         memcpy(info.ID, current.ID, sizeof(info.ID));
-         memcpy(info.name, current.name, sizeof(info.name));
-         info.color_R = current.color_R;
-         info.color_G = current.color_G;
-         info.color_B = current.color_B;
-         info.color_A = current.color_A;
-         info.temperature_min = current.temperature_min;
-         info.temperature_max = current.temperature_max;
-
-         if(args["id_str"].isString()) {
-             if (strlen(args["id_str"]) > 8) { SendError(id, "TOO_LONG", "ID too long (max 8)"); return; }
-             info.SetID(args["id_str"]);
-         }
-         if(args["name"].isString()) {
-             if (strlen(args["name"]) > 20) { SendError(id, "TOO_LONG", "Name too long (max 20)"); return; }
-             info.SetName(args["name"]);
-         }
-         if(args["temp_min"].isInt()) info.temperature_min = (uint16_t)(int)args["temp_min"];
-         if(args["temp_max"].isInt()) info.temperature_max = (uint16_t)(int)args["temp_max"];
-         
-         if(args["color"].isArray()) {
-              LiteArray& c = args["color"].getArray();
-              if(c.size() >= 3) {
-                  info.color_R = (uint8_t)c.getInt(0); info.color_G = (uint8_t)c.getInt(1); info.color_B = (uint8_t)c.getInt(2);
-                  if(c.size() > 3) info.color_A = (uint8_t)c.getInt(3); else info.color_A = 255;
-              }
-          }
-         
-         float meters = -1.0f;
-         // Accept both float and int since Python may send 0 instead of 0.0
-         if(args["meters"].isFloat()) meters = args["meters"];
-         else if(args["meters"].isInt()) meters = (float)args["meters"].asInt();
-         
-         _mmu->SetFilamentInfoAction(lane, info, meters);
-         SendOk(id);
-    }
 
     void HandleCalibrate(int id, JsonObject args) {
          if (!_mmu) return;
@@ -650,8 +521,6 @@ namespace KlipperCLI {
         else if (strcasecmp(cmd, "SET_AUTO_FEED") == 0) HandleSetAutoFeed(id, args);
         else if (strcasecmp(cmd, "SET_PRESSURE_ADVANCED") == 0 || strcasecmp(cmd, "SET_PA") == 0) HandleSetPressureAdvanced(id, args);
         else if (strcasecmp(cmd, "SET_MOVE_PID") == 0) HandleSetMovePID(id, args);
-        else if (strcasecmp(cmd, "GET_FILAMENT_INFO") == 0) HandleGetFilamentInfo(id, args);
-        else if (strcasecmp(cmd, "SET_FILAMENT_INFO") == 0) HandleSetFilamentInfo(id, args);
         else if (strcasecmp(cmd, "CALIBRATE") == 0) HandleCalibrate(id, args);
         else if (strcasecmp(cmd, "TEST_MOTOR") == 0) HandleTestMotor(id, args);
         else if (strcasecmp(cmd, "FEED_TO_EXTRUDER") == 0) HandleFeedToExtruder(id, args);
@@ -728,24 +597,6 @@ namespace KlipperCLI {
             }
         }
         
-        // Diagnostic Broadcasting (every 100ms)
-        if (millis() - last_diag_broadcast > 100) {
-            last_diag_broadcast = millis();
-            for (int i = 0; i < 4; i++) {
-                if (_mmu->IsDiagnosticActive(i)) {
-                    int enc = _mmu->GetRawEncoder(i);
-                    float press = _mmu->GetRawPressure(i);
-                    int p_int = (int)press;
-                    int p_dec = (int)(press * 1000) % 1000;
-                    
-                    int len = snprintf(global_json_buf, sizeof(global_json_buf),
-                        "{\"event\":\"DIAG_DATA\",\"lane\":%d,\"raw_enc\":%d,\"raw_pressure\":%d.%03d}\r\n",
-                        i, enc, p_int, p_dec);
-                    if (_transport) _transport->Write((const uint8_t*)global_json_buf, len);
-                    if (_aux_transport) _aux_transport->Write((const uint8_t*)global_json_buf, len);
-                }
-            }
-        }
 
         // FTE Notification
         if (_mmu && millis() - last_fte_check > 50) {

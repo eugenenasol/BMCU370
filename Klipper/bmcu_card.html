@@ -313,12 +313,8 @@
           <span class="pill" id="lane0_presence">--</span>
         </div>
         <div class="info">
-          <div><strong>Name:</strong> <span id="lane0_name">--</span></div>
-          <div><strong>Temp:</strong> <span id="lane0_temp">--</span></div>
-          <div><strong>RFID:</strong> <span id="lane0_rfid">--</span></div>
           <div><strong>Meters:</strong> <span id="lane0_meters">--</span></div>
           <div><strong>Status:</strong> <span id="lane0_status">--</span></div>
-          <div class="color-swatch"><strong>Color:</strong> <span class="color-box" id="lane0_color"></span><span id="lane0_color_hex">--</span></div>
         </div>
         <div class="buttons">
           <button onclick="feedLane(0)">Feed</button>
@@ -335,12 +331,8 @@
           <span class="pill" id="lane1_presence">--</span>
         </div>
         <div class="info">
-          <div><strong>Name:</strong> <span id="lane1_name">--</span></div>
-          <div><strong>Temp:</strong> <span id="lane1_temp">--</span></div>
-          <div><strong>RFID:</strong> <span id="lane1_rfid">--</span></div>
           <div><strong>Meters:</strong> <span id="lane1_meters">--</span></div>
           <div><strong>Status:</strong> <span id="lane1_status">--</span></div>
-          <div class="color-swatch"><strong>Color:</strong> <span class="color-box" id="lane1_color"></span><span id="lane1_color_hex">--</span></div>
         </div>
         <div class="buttons">
           <button onclick="feedLane(1)">Feed</button>
@@ -357,12 +349,8 @@
           <span class="pill" id="lane2_presence">--</span>
         </div>
         <div class="info">
-          <div><strong>Name:</strong> <span id="lane2_name">--</span></div>
-          <div><strong>Temp:</strong> <span id="lane2_temp">--</span></div>
-          <div><strong>RFID:</strong> <span id="lane2_rfid">--</span></div>
           <div><strong>Meters:</strong> <span id="lane2_meters">--</span></div>
           <div><strong>Status:</strong> <span id="lane2_status">--</span></div>
-          <div class="color-swatch"><strong>Color:</strong> <span class="color-box" id="lane2_color"></span><span id="lane2_color_hex">--</span></div>
         </div>
         <div class="buttons">
           <button onclick="feedLane(2)">Feed</button>
@@ -379,66 +367,19 @@
           <span class="pill" id="lane3_presence">--</span>
         </div>
         <div class="info">
-          <div><strong>Name:</strong> <span id="lane3_name">--</span></div>
-          <div><strong>Temp:</strong> <span id="lane3_temp">--</span></div>
-          <div><strong>RFID:</strong> <span id="lane3_rfid">--</span></div>
           <div><strong>Meters:</strong> <span id="lane3_meters">--</span></div>
           <div><strong>Status:</strong> <span id="lane3_status">--</span></div>
-          <div class="color-swatch"><strong>Color:</strong> <span class="color-box" id="lane3_color"></span><span id="lane3_color_hex">--</span></div>
         </div>
         <div class="buttons">
           <button onclick="feedLane(3)">Feed</button>
           <button onclick="retractLane(3)">Retract</button>
           <button id="lane3_autoBtn" onclick="autoToggleLane(3)">Auto On</button>
           <button onclick="selectLane(3)">Select</button>
-          <button class="full" onclick="openEditModal(3)">Set Info</button>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="modal hidden" id="edit-modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <div class="modal-title" id="edit-title">Set lane info</div>
-        <button class="icon-button" aria-label="Close" onclick="closeEditModal()">x</button>
-      </div>
-      <form id="edit-form">
-        <input type="hidden" id="field-lane">
-        <div class="form-row">
-          <label for="field-name">Name</label>
-          <input id="field-name" type="text" maxlength="32" autocomplete="off" placeholder="e.g. PLA Orange">
-        </div>
-        <div class="form-row">
-          <label for="field-temp-min">Temp minimum (C)</label>
-          <input id="field-temp-min" type="number" inputmode="decimal" placeholder="0">
-        </div>
-        <div class="form-row">
-          <label for="field-temp-max">Temp maximum (C)</label>
-          <input id="field-temp-max" type="number" inputmode="decimal" placeholder="0">
-        </div>
-        <div class="form-row">
-          <label for="field-id">RFID / ID (max 8 chars)</label>
-          <input id="field-id" type="text" maxlength="8" autocomplete="off">
-        </div>
-        <div class="form-row">
-          <label for="field-meters">Meters remaining</label>
-          <input id="field-meters" type="number" inputmode="decimal" min="0" step="0.1" placeholder="leave blank to skip">
-        </div>
-        <div class="form-row">
-          <label for="field-color">Color</label>
-          <div class="color-inputs">
-            <input id="field-color" type="color" value="#3a7bd5">
-            <input id="field-color-hex" type="text" maxlength="7" placeholder="#RRGGBB" autocomplete="off">
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button type="button" class="btn ghost" onclick="closeEditModal()">Cancel</button>
-          <button type="submit" class="btn">Save</button>
-        </div>
-      </form>
-    </div>
-  </div>
 
 <script>
   let currentLanes = [];
@@ -493,33 +434,20 @@
 
         currentLanes = lanes;
         lanes.forEach((lane, i) => {
-          const nameEl = document.getElementById('lane' + i + '_name');
-          const tempEl = document.getElementById('lane' + i + '_temp');
-          const rfidEl = document.getElementById('lane' + i + '_rfid');
           const metersEl = document.getElementById('lane' + i + '_meters');
           const presenceEl = document.getElementById('lane' + i + '_presence');
           const statusEl = document.getElementById('lane' + i + '_status');
-          const colorBox = document.getElementById('lane' + i + '_color');
-          const colorHexEl = document.getElementById('lane' + i + '_color_hex');
           const autoBtn = document.getElementById('lane' + i + '_autoBtn');
 
-          nameEl.textContent = lane.name || '--';
-          const hasTemps = lane.temp_min !== undefined && lane.temp_max !== undefined;
-          tempEl.textContent = hasTemps ? lane.temp_min + ' - ' + lane.temp_max + ' C' : '--';
-          rfidEl.textContent = lane.id_str || lane.rfid || '--';
-          metersEl.textContent = (lane.meters !== undefined && lane.meters >= 0) ? lane.meters : '--';
+          if (metersEl) metersEl.textContent = (lane.meters !== undefined && lane.meters >= 0) ? lane.meters : '--';
           const isPresent = !!lane.present;
-          presenceEl.textContent = isPresent ? 'Present' : 'Empty';
-          presenceEl.className = 'pill' + (isPresent ? ' present' : '');
-          statusEl.textContent = lane.motion || 'Idle';
+          if (presenceEl) {
+            presenceEl.textContent = isPresent ? 'Present' : 'Empty';
+            presenceEl.className = 'pill' + (isPresent ? ' present' : '');
+          }
+          if (statusEl) statusEl.textContent = lane.motion || 'Idle';
 
-          const hex = buildColorHex(lane.color) || '';
-          colorBox.style.backgroundColor = hex || '#3a3a3a';
-          const hexLabel = hex ? hex.toUpperCase() : '--';
-          document.getElementById('lane' + i + '_color_hex').textContent = hexLabel;
-          colorBox.setAttribute('title', hexLabel);
-
-          autoBtn.textContent = autoFeedState[i] ? 'Auto Off' : 'Auto On';
+          if (autoBtn) autoBtn.textContent = autoFeedState[i] ? 'Auto Off' : 'Auto On';
         });
         setTimestampLabel();
       })
