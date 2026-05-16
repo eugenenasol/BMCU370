@@ -41,7 +41,7 @@ void BMCU_Hardware::DelayMS(uint32_t ms) {
 }
 
 void BMCU_Hardware::WatchdogReset() {
-    // Hardware::Watchdog_Reset(); // If implemented
+    IWDG->CTLR = 0xAAAA; // Reload Independent Watchdog
 }
 
 void BMCU_Hardware::SetMotorPower(int lane, int pwm_val) {
