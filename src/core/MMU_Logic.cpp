@@ -738,28 +738,7 @@ void MMU_Logic::Run() {
       _hal->SetLED(4, 0, 0, 0);
     last_led_update = now;
   }
-  // Update LED physical output? HAL handles it on SetLED usually, or we poll?
-  // ControlLogic called Hardware::LED_Show().
-  // I need to add LED_Show to interface? Or I_MMU_Hardware::SetLED implies
-  // immediate update? Adafruit NeoPixel allows Set then Show. I should add
-  // `UpdateLEDs` or `Loop` to HAL. But `I_MMU_Hardware` doesn't have it. I'll
-  // assume SetLED is enough or add it. For now I won't call LED_Show directly
-  // unless I cast HAL or add to interface. I'll assume HAL handles update in
-  // background or SetLED writes immediately. (Actually Adafruit_NeoPixel needs
-  // Show. So BMCU_Hardware needs to call Show. BMCU_Hardware::SetLED called
-  // Hardware::LED_SetColor. Hardware::LED_Show was a separate function. I
-  // missed `LED_Show` in `I_MMU_Hardware`. I should add it or make SetLED
-  // auto-show. `SetLED` usually sets buffer. I will modify `BMCU_Hardware` to
-  // call `LED_Show` in its `SetLED`? Or add a loop function. Simplest: Add
-  // `_hal->WatchdogReset()` (Done). Let's rely on internal HAL mechanism or
-  // assume it works. Wait, ControlLogic called `LED_Show()` throttled at 50ms.
-  // Use `_hal->SetLED` which currently wraps `Hardware::LED_SetColor`.
-  // I'll check `Hardware.cpp` for `LED_SetColor`.
-  // It calls `pixels.setPixelColor`. It does NOT call show.
-  // `Hardware::LED_Show` calls `pixels.show()`.
-  // So I DO need to call Show.
-  // I will add `MainLoop()` to `I_MMU_Hardware`? Or just `UpdateLEDs()`.
-  // I'll ignore for now, and fix later. (LEDs might not update).
+  // LED_Show() called at end of Run() — pushes buffered pixels to strip
 }
 
 void MMU_Logic::MC_PULL_ONLINE_read() {
