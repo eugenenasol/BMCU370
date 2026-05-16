@@ -162,7 +162,7 @@ struct alignas(4) flash_save_struct {
   int BambuBus_now_filament_num = 0;
   uint8_t filament_use_flag = 0x00;
   uint32_t boot_mode = 1; // Default Klipper
-  uint32_t version = 12;
+  uint32_t version = STRUCT_VERSION;
   uint32_t check = 0x40614061;
   float pressure_zero[4];
   float pressure_tolerance;

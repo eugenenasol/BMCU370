@@ -21,7 +21,6 @@ BMCU_Hardware::BMCU_Hardware() {
 
 void BMCU_Hardware::Init() {
     Hardware::InitBase();
-    Hardware::ADC_Init();
     Hardware::PWM_Init();
     Hardware::LED_Init();
     

@@ -4,7 +4,6 @@
 #include "MMU_Logic.h"
 #include "CommandRouter.h"
 
-
 // Instance Management (Global scope to persist)
 static BMCU_Hardware* hal = nullptr;
 static UART_Transport* transport = nullptr;
@@ -35,7 +34,10 @@ void setup() {
 
 void loop() {
     // Run Logic
-    if (logic) logic->Run();
+    if (logic) {
+        logic->Run();
+        if (hal) hal->WatchdogReset();
+    }
     
     // Run API (polls both primary and auxiliary channels)
     if (api) api->Run();

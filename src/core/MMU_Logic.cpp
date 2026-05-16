@@ -119,7 +119,7 @@ void MMU_Logic::SetMovePID(float p, float i, float d, float zero) {
   if (d >= 0) data_save.move_d = d;
   if (zero >= 0) data_save.move_pwm_zero = zero;
   SyncMovePID();
-  SetNeedToSave();
+  SaveSettings();
 }
 
 void MMU_Logic::LoadSettings() {
@@ -127,45 +127,8 @@ void MMU_Logic::LoadSettings() {
   bool need_defaults = true;
 
   if (ptr->check == 0x40614061) {
-    if (ptr->version == data_save.version) {
+    if (ptr->version == STRUCT_VERSION) {
       __builtin_memcpy(&data_save, ptr, sizeof(data_save));
-      need_defaults = false;
-    } else if (ptr->version >= 5 && ptr->version <= 9) {
-      // Migrate v5-v9 to v10
-      size_t copy_size = (ptr->version >= 9) ? sizeof(data_save) - sizeof(float) : sizeof(data_save) - sizeof(float)*3;
-      __builtin_memcpy(&data_save, ptr, copy_size);
-      
-      if (ptr->version < 9) {
-        data_save.pressure_gain = 250.0f;
-        data_save.pressure_tolerance = 0.03f;
-      }
-      data_save.pressure_min_pwm = 50.0f;
-      data_save.version = 13;
-      data_save.pressure_gain = 5000.0f;
-      data_save.pressure_offset = -0.07f;
-      data_save.boost_threshold = 0.02f;
-      data_save.boost_pwm = 350.0f;
-      data_save.boost_time_ms = 50;
-      data_save.retract_deadzone = 1.2f;
-      data_save.pressure_min_pwm = 180.0f;
-      data_save.pressure_tolerance = 0.015f;
-      data_save.move_p = 25.0f;
-      data_save.move_i = 80.0f;
-      data_save.move_d = 0.0f;
-      data_save.move_pwm_zero = 200.0f;
-      data_save.version = 14;
-      SetNeedToSave();
-      need_defaults = false;
-    } else if (ptr->version == 5) {
-      __builtin_memcpy(&data_save, ptr,
-                       sizeof(data_save) - sizeof(float) * 6); // copy v5
-      data_save.version = 9;
-      for (int i = 0; i < 4; i++) {
-        data_save.pressure_zero[i] = 1.65f;
-      }
-      data_save.pressure_tolerance = 0.03f;
-      data_save.pressure_gain = 250.0f;
-      SetNeedToSave();
       need_defaults = false;
     }
   }
@@ -777,7 +740,7 @@ void MMU_Logic::MC_PULL_ONLINE_read() {
 
 void MMU_Logic::SetPressureTolerance(float tol) {
   data_save.pressure_tolerance = tol;
-  SetNeedToSave();
+  SaveSettings();
 }
 
 void MMU_Logic::SetPressureGain(float gain) {
@@ -785,37 +748,37 @@ void MMU_Logic::SetPressureGain(float gain) {
   for (int i = 0; i < 4; i++) {
     motors[i].PID_pressure.Init(gain, 0, 0);
   }
-  SetNeedToSave();
+  SaveSettings();
 }
 
 void MMU_Logic::SetPressureMinPWM(float pwm) {
   data_save.pressure_min_pwm = pwm;
-  SetNeedToSave();
+  SaveSettings();
 }
 
 void MMU_Logic::SetPressureOffset(float offset) {
   data_save.pressure_offset = offset;
-  SetNeedToSave();
+  SaveSettings();
 }
 
 void MMU_Logic::SetBoostThreshold(float threshold) {
   data_save.boost_threshold = threshold;
-  SetNeedToSave();
+  SaveSettings();
 }
 
 void MMU_Logic::SetBoostPWM(float pwm) {
   data_save.boost_pwm = pwm;
-  SetNeedToSave();
+  SaveSettings();
 }
 
 void MMU_Logic::SetBoostTime(uint32_t ms) {
   data_save.boost_time_ms = ms;
-  SetNeedToSave();
+  SaveSettings();
 }
 
 void MMU_Logic::SetRetractDeadzone(float deadzone) {
   data_save.retract_deadzone = deadzone;
-  SetNeedToSave();
+  SaveSettings();
 }
 
 // User Actions
@@ -1046,13 +1009,13 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
     res.value = raw;
     saved = true;
   }
-
   if (saved) {
-    SetNeedToSave();
+    SaveSettings();
   }
 
   return res;
 }
+
 
 void MMU_Logic::StartFeedToExtruder(int lane, float speed, float max_mm,
                                      float pressure_threshold, uint32_t stall_ms, int cmd_id) {
