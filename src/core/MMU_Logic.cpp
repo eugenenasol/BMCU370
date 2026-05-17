@@ -897,17 +897,14 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
     return res;
   }
 
-  bool saved = false;
-
   if (lane == -1) {
-    // Calibrate all empty lanes
+    // Calibrate all empty lanes (update RAM only; persist with SAVE_PARAMS)
     for (int i = 0; i < 4; i++) {
       if (_hal->GetFilamentPresence(i))
         continue; // Skip busy lanes
 
       float raw = _hal->GetPressureReading(i);
       data_save.pressure_zero[i] = raw;
-      saved = true;
     }
   } else {
     // Calibrate specific lane
@@ -920,30 +917,6 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
     float raw = _hal->GetPressureReading(lane);
     data_save.pressure_zero[lane] = raw;
     res.value = raw;
-    saved = true;
-  }
-  if (saved) {
-    // Read-Modify-Write Zeros to Flash
-    flash_save_struct temp;
-    flash_save_struct *ptr = (flash_save_struct *)(uintptr_t)(use_flash_addr);
-    
-    // 1. Read current FLASH state (not RAM)
-    __builtin_memcpy(&temp, ptr, sizeof(temp));
-    
-    // 2. If Flash state is empty/corrupt or is an old version, initialize it from current RAM data_save
-    if (temp.check != 0x40614061 || temp.version != STRUCT_VERSION) {
-      __builtin_memcpy(&temp, &data_save, sizeof(temp));
-    }
-    
-    // 3. Update ONLY the zeros from current RAM values
-    if (lane == -1) {
-        for(int i=0; i<4; i++) temp.pressure_zero[i] = data_save.pressure_zero[i];
-    } else {
-        temp.pressure_zero[lane] = data_save.pressure_zero[lane];
-    }
-    
-    // 4. Commit back to FLASH (preserves unsaved PID/PA in RAM)
-    res.flash_ok = Flash_saves(&temp, sizeof(temp), use_flash_addr);
   }
 
   return res;
