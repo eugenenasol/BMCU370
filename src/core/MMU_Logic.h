@@ -9,7 +9,7 @@ class I_MMU_Hardware;
 
 // --- Internal Configuration Constants ---
 // (Could be moved to a config file)
-#define STRUCT_VERSION 15
+#define STRUCT_VERSION 16
 #define MOTOR_SPEED_SEND 1500
 #define MOTOR_SPEED_AMS_LITE_SEND 1000
 #define MOTOR_SPEED_SLOW_SEND 800
@@ -158,8 +158,6 @@ enum LanePositionState {
 };
 
 struct alignas(4) flash_save_struct {
-  LaneState lanes[4];
-  int active_lane = 0;
   uint32_t version = STRUCT_VERSION;
   uint32_t check = 0x40614061;
   float pressure_zero[4];
@@ -257,6 +255,7 @@ public:
 
   // Persistence
   void SaveSettings();
+  void LoadSettings();
   void SetNeedToSave();
   void SyncMovePID();
   void SetMovePID(float p, float i, float d, float zero);
@@ -269,6 +268,9 @@ private:
   Motion_control_save_struct mc_save;
   MotorChannel motors[4];
   FeedToExtruderState _fte;
+
+  LaneState lanes[4];
+  int active_lane;
 
 
   LanePositionState filament_now_position[4];
@@ -321,7 +323,6 @@ private:
   bool Prepare_For_filament_Pull_Back(float OUT_filament_meters);
   void UpdateLEDStatus(int channel);
   void RunMotorChannel(int channel, float time_E);
-  void LoadSettings();
 
   // Helper
   uint64_t get_time64() { return _hal->GetTimeMS(); }

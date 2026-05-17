@@ -48,6 +48,10 @@ MMU_Logic::MMU_Logic(I_MMU_Hardware *hal) : _hal(hal) {
   // Init Arrays
   for (int i = 0; i < 4; i++) {
     motors[i].Init(i);
+    lanes[i].meters = 0;
+    lanes[i].status = LanePresenceStatus::offline;
+    lanes[i].motion_set = LaneMotionSet::idle;
+    
     filament_now_position[i] = filament_idle;
     speed_as5600[i] = 0;
     MC_PULL_stu_raw[i] = 0;
@@ -63,6 +67,7 @@ MMU_Logic::MMU_Logic(I_MMU_Hardware *hal) : _hal(hal) {
     diag_end_time[i] = 0;
     pressure_filtered[i] = 1.65f;
   }
+  active_lane = 0;
   is_backing_out = false;
   is_connected = false;
   last_heartbeat_time = 0;
@@ -82,8 +87,9 @@ void MMU_Logic::Init() {
     motors[i].SetMotion(LaneMotionState::pressure_ctrl_idle);
     motors[i].PID_pressure.Init(data_save.pressure_gain, 0, 0);
 
-    last_total_distance[i] = data_save.lanes[i].meters;
+    last_total_distance[i] = 0; // Odometer starts at 0 every session
   }
+  active_lane = 0; // Default to lane 0 at startup
   SyncMovePID();
 }
 
@@ -117,7 +123,7 @@ void MMU_Logic::SetMovePID(float p, float i, float d, float zero) {
   if (d >= 0) data_save.move_d = d;
   if (zero >= 0) data_save.move_pwm_zero = zero;
   SyncMovePID();
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 void MMU_Logic::LoadSettings() {
@@ -133,8 +139,6 @@ void MMU_Logic::LoadSettings() {
 
   if (need_defaults) {
     for (int i = 0; i < 4; i++) {
-      data_save.lanes[i].meters = 0;
-      data_save.lanes[i].pressure = 0;
       data_save.pressure_zero[i] = 1.65f;
     }
     data_save.pressure_tolerance = 0.015f;
@@ -190,7 +194,7 @@ void MMU_Logic::AS5600_Update(float time_E) {
     if (motors[i].motion != LaneMotionState::stop &&
         motors[i].motion != LaneMotionState::pressure_ctrl_idle &&
         motors[i].motion != LaneMotionState::pressure_ctrl_in_use) {
-        data_save.lanes[i].meters += dist_E / 1000.0f;
+        lanes[i].meters += dist_E / 1000.0f;
     }
   }
 }
@@ -505,7 +509,7 @@ bool MMU_Logic::Prepare_For_filament_Pull_Back(float OUT_filament_meters) {
         is_backing_out = false;
         motors[i].SetMotion(LaneMotionState::stop);
         filament_now_position[i] = filament_idle;
-        data_save.lanes[i].motion_set = LaneMotionSet::idle;
+        lanes[i].motion_set = LaneMotionSet::idle;
         last_total_distance[i] = 0;
       }
       wait = true;
@@ -515,7 +519,7 @@ bool MMU_Logic::Prepare_For_filament_Pull_Back(float OUT_filament_meters) {
 }
 
 void MMU_Logic::motor_motion_switch() {
-  int num = data_save.active_lane;
+  int num = active_lane;
   // Logic mostly identical to before, updating member vars
 
   for (int i = 0; i < 4; i++) {
@@ -554,7 +558,7 @@ void MMU_Logic::motor_motion_switch() {
       }
 
       if (MC_ONLINE_key_stu[num] > 0) {
-        LaneMotionSet current_motion = data_save.lanes[num].motion_set;
+        LaneMotionSet current_motion = lanes[num].motion_set;
 
         if (filament_now_position[num] == filament_loading) {
           float pressure = MC_PULL_stu_raw[num];
@@ -699,12 +703,12 @@ void MMU_Logic::MC_PULL_ONLINE_read() {
 
     // Sync Filament Status for Bambu Protocol
     if (MC_ONLINE_key_stu[i] != 0) {
-      if (data_save.lanes[i].status == LanePresenceStatus::offline) {
-        data_save.lanes[i].status = LanePresenceStatus::online;
+      if (lanes[i].status == LanePresenceStatus::offline) {
+        lanes[i].status = LanePresenceStatus::online;
       }
     } else {
-      if (data_save.lanes[i].status == LanePresenceStatus::online) {
-        data_save.lanes[i].status = LanePresenceStatus::offline;
+      if (lanes[i].status == LanePresenceStatus::online) {
+        lanes[i].status = LanePresenceStatus::offline;
       }
     }
 
@@ -717,13 +721,13 @@ void MMU_Logic::MC_PULL_ONLINE_read() {
     else
       MC_PULL_stu[i] = 0;
 
-    data_save.lanes[i].pressure = (uint16_t)(raw_p * 1000.0f);
+    lanes[i].pressure = (uint16_t)(raw_p * 1000.0f);
   }
 }
 
 void MMU_Logic::SetPressureTolerance(float tol) {
   data_save.pressure_tolerance = tol;
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 void MMU_Logic::SetPressureGain(float gain) {
@@ -731,44 +735,44 @@ void MMU_Logic::SetPressureGain(float gain) {
   for (int i = 0; i < 4; i++) {
     motors[i].PID_pressure.Init(gain, 0, 0);
   }
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 void MMU_Logic::SetPressureMinPWM(float pwm) {
   data_save.pressure_min_pwm = pwm;
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 void MMU_Logic::SetPressureOffset(float offset) {
   data_save.pressure_offset = offset;
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 void MMU_Logic::SetBoostThreshold(float threshold) {
   data_save.boost_threshold = threshold;
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 void MMU_Logic::SetBoostPWM(float pwm) {
   data_save.boost_pwm = pwm;
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 void MMU_Logic::SetBoostTime(uint32_t ms) {
   data_save.boost_time_ms = ms;
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 void MMU_Logic::SetRetractDeadzone(float deadzone) {
   data_save.retract_deadzone = deadzone;
-  SaveSettings();
+  // SaveSettings(); -> Removed auto-save
 }
 
 
 void MMU_Logic::StartLoadFilament(int tray, int length_mm) {
   if (tray < 0 || tray >= 4)
     return;
-  data_save.active_lane = tray;
+  active_lane = tray;
   filament_now_position[tray] = filament_loading;
   motors[tray].SetMotion(LaneMotionState::send);
   unload_target_dist[tray] = length_mm;
@@ -789,7 +793,7 @@ void MMU_Logic::StartLoadFilament(int tray, int length_mm) {
 void MMU_Logic::StartUnloadFilament(int tray, int length_mm) {
   if (tray < 0 || tray >= 4)
     return;
-  data_save.active_lane = tray;
+  active_lane = tray;
   filament_now_position[tray] = filament_unloading;
   motors[tray].SetMotion(LaneMotionState::pull);
   unload_target_dist[tray] = length_mm;
@@ -824,7 +828,7 @@ void MMU_Logic::StopAll() {
 
 void MMU_Logic::SetActiveLaneIndex(int index) {
   if (index >= 0 && index < 4) {
-    data_save.active_lane = index;
+    active_lane = index;
   }
 }
 
@@ -867,12 +871,12 @@ int MMU_Logic::GetLaneMotion(int lane) {
 
 LaneState &MMU_Logic::GetLane(int index) {
   if (index < 0 || index >= 4)
-    return data_save.lanes[0];
-  return data_save.lanes[index];
+    return lanes[0];
+  return lanes[index];
 }
 
 int MMU_Logic::GetActiveLaneIndex() {
-  return data_save.active_lane;
+  return active_lane;
 }
 
 float MMU_Logic::GetPressureZero(int lane) {
@@ -919,7 +923,22 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
     saved = true;
   }
   if (saved) {
-    SaveSettings();
+    // Read-Modify-Write Zeros to Flash
+    flash_save_struct temp;
+    flash_save_struct *ptr = (flash_save_struct *)(uintptr_t)(use_flash_addr);
+    
+    // 1. Read current FLASH state (not RAM)
+    __builtin_memcpy(&temp, ptr, sizeof(temp));
+    
+    // 2. Update ONLY the zeros from current RAM values
+    if (lane == -1) {
+        for(int i=0; i<4; i++) temp.pressure_zero[i] = data_save.pressure_zero[i];
+    } else {
+        temp.pressure_zero[lane] = data_save.pressure_zero[lane];
+    }
+    
+    // 3. Commit back to FLASH (preserves unsaved PID/PA in RAM)
+    Flash_saves(&temp, sizeof(temp), use_flash_addr);
   }
 
   return res;

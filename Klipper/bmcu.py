@@ -183,6 +183,8 @@ class BMCU:
         gc.register_command("BMCU_SET_PA", self.cmd_BMCU_SET_PA)
         gc.register_command("BMCU_SET_MOVE_PID", self.cmd_BMCU_SET_MOVE_PID)
         gc.register_command("BMCU_TEST_MOTOR", self.cmd_BMCU_TEST_MOTOR)
+        gc.register_command("BMCU_SAVE_PARAMS", self.cmd_BMCU_SAVE_PARAMS)
+        gc.register_command("BMCU_LOAD_PARAMS", self.cmd_BMCU_LOAD_PARAMS)
 
     # -----------------------------
     # Timers
@@ -739,6 +741,20 @@ class BMCU:
         args = {"lane": lane, "pwm": pwm, "duration": duration}
         ok, pkt_id = self._send_pkt("TEST_MOTOR", args, note="test_motor")
         gcmd.respond_info(f"TEST_MOTOR lane={lane} pwm={pwm} duration={duration}")
+
+    def cmd_BMCU_SAVE_PARAMS(self, gcmd):
+        wait_s = gcmd.get_float("WAIT", 0.5)
+        ok, pkt_id = self._send_pkt("SAVE_PARAMS", {}, note="save_params")
+        gcmd.respond_info(f"SAVE_PARAMS sent id={pkt_id}")
+        if ok:
+            self._wait_for_reply(gcmd, pkt_id, wait_s)
+
+    def cmd_BMCU_LOAD_PARAMS(self, gcmd):
+        wait_s = gcmd.get_float("WAIT", 0.5)
+        ok, pkt_id = self._send_pkt("LOAD_PARAMS", {}, note="load_params")
+        gcmd.respond_info(f"LOAD_PARAMS sent id={pkt_id}")
+        if ok:
+            self._wait_for_reply(gcmd, pkt_id, wait_s)
 
 
 def load_config(config):

@@ -122,6 +122,8 @@ if (serial_idle || timeout_hit) SaveSettings();
 | `MOVE` | `axis`, `dist_mm`, `speed` | Перемещение оси |
 | `STOP` | — | Стоп всех моторов |
 | `SELECT_LANE` | `lane` (0-3) | Выбрать активный канал |
+| `SAVE_PARAMS` | — | Записать все параметры во Flash |
+| `LOAD_PARAMS` | — | Загрузить все параметры из Flash |
 | `SET_AUTO_FEED` | `lane`, `enable` | Авто-подача по давлению |
 | `GET_FILAMENT_INFO` | `lane` | Данные о филаменте канала |
 | `SET_FILAMENT_INFO` | `lane`, `name`, `id_str`, `temp_min`, `temp_max`, `color`, `meters` | Записать параметры |

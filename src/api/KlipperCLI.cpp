@@ -451,6 +451,18 @@ namespace KlipperCLI {
         SendOk(id);
     }
 
+    void HandleSaveParams(int id, LiteObject& args) {
+        if (!_mmu) return;
+        _mmu->SaveSettings();
+        SendOk(id, "SAVED", "Parameters saved to flash");
+    }
+
+    void HandleLoadParams(int id, LiteObject& args) {
+        if (!_mmu) return;
+        _mmu->LoadSettings();
+        SendOk(id, "LOADED", "Parameters loaded from flash");
+    }
+
     void HandleFeedToExtruder(int id, LiteObject& args) {
         if (!_mmu) return;
         int lane = args["lane"] | (args["LANE"] | -1);
@@ -524,6 +536,8 @@ namespace KlipperCLI {
         else if (strcasecmp(cmd, "CALIBRATE") == 0) HandleCalibrate(id, args);
         else if (strcasecmp(cmd, "TEST_MOTOR") == 0) HandleTestMotor(id, args);
         else if (strcasecmp(cmd, "FEED_TO_EXTRUDER") == 0) HandleFeedToExtruder(id, args);
+        else if (strcasecmp(cmd, "SAVE_PARAMS") == 0) HandleSaveParams(id, args);
+        else if (strcasecmp(cmd, "LOAD_PARAMS") == 0) HandleLoadParams(id, args);
         else {
             SendError(id, "UNKNOWN_COMMAND", cmd);
         }
