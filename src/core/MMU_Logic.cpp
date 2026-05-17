@@ -943,7 +943,7 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
     }
     
     // 4. Commit back to FLASH (preserves unsaved PID/PA in RAM)
-    Flash_saves(&temp, sizeof(temp), use_flash_addr);
+    res.flash_ok = Flash_saves(&temp, sizeof(temp), use_flash_addr);
   }
 
   return res;

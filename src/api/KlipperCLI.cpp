@@ -374,7 +374,7 @@ namespace KlipperCLI {
              offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, ",\"lane\":%d,\"value\":%d.%03d", lane, p_int, p_dec);
          }
          
-         offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "}\r\n");
+          offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, ",\"flash_ok\":%s}\r\n", res.flash_ok ? "true" : "false");
          if (_transport) _transport->Write((const uint8_t*)global_json_buf, offset);
     }
     

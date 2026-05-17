@@ -185,6 +185,7 @@ struct CalibrateResult {
   bool ok;
   float value;
   const char *error_msg;
+  bool flash_ok = true;
 };
 
 // --- MMU Logic Class ---
