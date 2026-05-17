@@ -658,7 +658,7 @@ void MMU_Logic::Run() {
     // during dead time) Option 2: Force save after 5000ms absolute (safety
     // fallback)
     bool serial_idle = KlipperCLI_IsSerialIdle(500); // 500ms of silence
-    bool timeout_hit = (now - save_timer > 5000);    // 5s absolute max
+    bool timeout_hit = (_hal->GetTimeMS() - save_timer > 5000);    // 5s absolute max
 
     if (serial_idle || timeout_hit) {
       SaveSettings();
@@ -930,14 +930,19 @@ CalibrateResult MMU_Logic::CalibratePressure(int lane) {
     // 1. Read current FLASH state (not RAM)
     __builtin_memcpy(&temp, ptr, sizeof(temp));
     
-    // 2. Update ONLY the zeros from current RAM values
+    // 2. If Flash state is empty/corrupt or is an old version, initialize it from current RAM data_save
+    if (temp.check != 0x40614061 || temp.version != STRUCT_VERSION) {
+      __builtin_memcpy(&temp, &data_save, sizeof(temp));
+    }
+    
+    // 3. Update ONLY the zeros from current RAM values
     if (lane == -1) {
         for(int i=0; i<4; i++) temp.pressure_zero[i] = data_save.pressure_zero[i];
     } else {
         temp.pressure_zero[lane] = data_save.pressure_zero[lane];
     }
     
-    // 3. Commit back to FLASH (preserves unsaved PID/PA in RAM)
+    // 4. Commit back to FLASH (preserves unsaved PID/PA in RAM)
     Flash_saves(&temp, sizeof(temp), use_flash_addr);
   }
 
