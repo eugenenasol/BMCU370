@@ -432,14 +432,17 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
 
         // Trigger 2: Stall (configurable timeout)
         if (__builtin_fabsf(x) > 900 && __builtin_fabsf(now_speed) < 5.0f) {
+          __disable_irq();
           if (m.stall_timer == 0) m.stall_timer = _hal->GetTimeMS();
-          if (_hal->GetTimeMS() - m.stall_timer > _fte.stall_ms) {
+          uint32_t stall_snapshot = m.stall_timer;
+          __enable_irq();
+          if (_hal->GetTimeMS() - stall_snapshot > _fte.stall_ms) {
             m.SetMotion(LaneMotionState::stop);
             _fte.done = true; _fte.active = false;
             _fte.reason = StopReason::stall;
             _hal->SetMotorPower(CHx, 0); return;
           }
-        } else { m.stall_timer = 0; }
+        } else { __disable_irq(); m.stall_timer = 0; __enable_irq(); }
 
         // Trigger 3: Distance
         if (m.accumulated_distance >= _fte.max_mm) {
@@ -453,14 +456,17 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       // Normal Stall Detection (500ms)
       if (m.motion != LaneMotionState::feed_to_extruder &&
           __builtin_fabsf(x) > 900 && __builtin_fabsf(now_speed) < 5.0f) {
+        __disable_irq();
         if (m.stall_timer == 0)
           m.stall_timer = _hal->GetTimeMS();
-        if (_hal->GetTimeMS() - m.stall_timer > 500) {
+        uint32_t stall_snapshot = m.stall_timer;
+        __enable_irq();
+        if (_hal->GetTimeMS() - stall_snapshot > 500) {
           m.SetMotion(LaneMotionState::stop);
           x = 0;
         }
       } else if (m.motion != LaneMotionState::feed_to_extruder) {
-        m.stall_timer = 0;
+        __disable_irq(); m.stall_timer = 0; __enable_irq();
       }
     }
   } else {

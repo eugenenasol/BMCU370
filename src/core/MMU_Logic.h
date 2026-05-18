@@ -105,7 +105,7 @@ public:
   float target_distance = 0;
   float accumulated_distance = 0;
   float current_velocity_set = 0;
-  uint32_t stall_timer = 0;
+  volatile uint32_t stall_timer = 0;  // Volatile: accessed from multiple contexts (ISR + main loop)
   bool SET_AUTO_FEED = false;
   uint64_t boost_end_time = 0;
   bool pull_state_old = false;
