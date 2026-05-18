@@ -223,14 +223,8 @@ namespace KlipperCLI {
          int mpw_int = (int)__builtin_fabsf(mpw);
          int mpw_dec = (int)((__builtin_fabsf(mpw) - mpw_int) * 10);
 
-          flash_save_struct *f_ptr = (flash_save_struct *)(uintptr_t)(0x0800F000);
-          float fz0 = f_ptr->pressure_zero[0];
-          int f0_int = (int)fz0;
-          int f0_dec = (int)((__builtin_fabsf(fz0) - __builtin_fabsf((float)f0_int)) * 1000.0f);
-          if (f0_dec < 0) f0_dec = -f0_dec;
-
           offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, 
-              "],\"p_tol\":%s%d.%03d,\"p_gain\":%s%d.%01d,\"p_offset\":%s%d.%03d,\"p_boost_thr\":%s%d.%03d,\"p_boost_pwm\":%s%d.%01d,\"p_boost_time\":%u,\"p_deadzone\":%s%d.%02d,\"p_min_pwm\":%s%d.%01d,\"m_p\":%d.%d,\"m_i\":%d.%d,\"m_d\":%d.%d,\"m_zero\":%d,\"f_chk\":%u,\"f_ver\":%u,\"f_z0\":%d.%03d}\r\n",
+              "],\"p_tol\":%s%d.%03d,\"p_gain\":%s%d.%01d,\"p_offset\":%s%d.%03d,\"p_boost_thr\":%s%d.%03d,\"p_boost_pwm\":%s%d.%01d,\"p_boost_time\":%u,\"p_deadzone\":%s%d.%02d,\"p_min_pwm\":%s%d.%01d,\"m_p\":%d.%d,\"m_i\":%d.%d,\"m_d\":%d.%d,\"m_zero\":%d}\r\n",
               get_sign(tol), tol_int, tol_dec,
               get_sign(gain), g_int, g_dec,
               get_sign(offset_val), off_int, off_dec,
@@ -242,10 +236,7 @@ namespace KlipperCLI {
               (int)_mmu->GetMoveP(), (int)(_mmu->GetMoveP() * 10) % 10,
               (int)_mmu->GetMoveI(), (int)(_mmu->GetMoveI() * 10) % 10,
               (int)_mmu->GetMoveD(), (int)(_mmu->GetMoveD() * 10) % 10,
-              (int)_mmu->GetMovePwmZero(),
-              (unsigned int)f_ptr->check,
-              (unsigned int)f_ptr->version,
-              f0_int, f0_dec);
+              (int)_mmu->GetMovePwmZero());
          I_MMU_Transport* t = _current_response_transport ? _current_response_transport : _transport;
          if (t) t->Write((const uint8_t*)global_json_buf, offset);
     }
