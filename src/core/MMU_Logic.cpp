@@ -94,7 +94,7 @@ void MMU_Logic::UpdateConnectivity(bool online) {
 }
 
 void MMU_Logic::SaveSettings() {
-  Flash_saves(&data_save, sizeof(data_save), use_flash_addr);
+  Flash_ConfigSave(&data_save, sizeof(data_save));
   Bambubus_need_to_save = false;
 }
 
@@ -121,12 +121,9 @@ void MMU_Logic::SetMovePID(float p, float i, float d, float zero) {
 }
 
 void MMU_Logic::LoadSettings() {
-  flash_save_struct *ptr = (flash_save_struct *)(uintptr_t)(use_flash_addr);
   bool need_defaults = true;
-
-  if (ptr->check == 0x40614061) {
-    if (ptr->version == STRUCT_VERSION) {
-      __builtin_memcpy(&data_save, ptr, sizeof(data_save));
+  if (Flash_ConfigLoad(&data_save, sizeof(data_save), NULL)) {
+    if (data_save.check == 0x40614061 && data_save.version == STRUCT_VERSION) {
       need_defaults = false;
     }
   }
@@ -371,7 +368,8 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
           } else if (error < -tol) {
             x = m.PID_pressure.Calculate(error + tol, time_E);
           } else {
-            m.PID_pressure.Clear();
+            // Pass 0 instead of clearing PID — preserves I-term for smooth dead-zone exit
+            m.PID_pressure.Calculate(0.0f);
           }
 
           // Min PWM Floor to overcome motor deadzone

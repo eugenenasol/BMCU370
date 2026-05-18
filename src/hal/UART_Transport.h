@@ -31,6 +31,7 @@ public:
     
     bool IsConnected() override;
     bool IsBusy() override;
+    uint32_t GetDroppedBytes() const { return dropped_bytes; }
 
     // Internal: Called by RX interrupt to buffer incoming bytes
     void OnByteReceived(uint8_t byte);
@@ -42,5 +43,6 @@ private:
     static constexpr uint16_t RX_BUFFER_SIZE = 1024;
     volatile uint8_t rx_buffer[RX_BUFFER_SIZE];
     volatile uint16_t rx_head = 0;
+    volatile uint32_t dropped_bytes = 0;   // Counter of bytes lost to ring buffer overflow
     volatile uint16_t rx_tail = 0;
 };

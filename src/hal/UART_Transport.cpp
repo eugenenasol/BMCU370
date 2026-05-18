@@ -98,6 +98,7 @@ void UART_Transport::OnByteReceived(uint8_t byte) {
     if (next_head != rx_tail) {
         rx_buffer[rx_head] = byte;
         rx_head = next_head;
+    } else {
+        dropped_bytes++;   // Counter of bytes lost to ring buffer overflow
     }
-    // If buffer full, drop byte
 }
