@@ -40,7 +40,18 @@ void BMCU_Hardware::DelayMS(uint32_t ms) {
 }
 
 void BMCU_Hardware::WatchdogReset() {
-    IWDG->CTLR = 0xAAAA; // Reload Independent Watchdog
+    // Initialize IWDG on first call (if not already configured)
+    if (!(IWDG->CTLR & 0x01)) {  // Check if IWDG is not yet enabled
+        IWDG->CTLR |= 0x01;       // Enable IWDG (LSI starts)
+        // Wait for registers to be accessible
+        while (IWDG->SR & 0x02);  // Wait RVU
+        while (IWDG->SR & 0x01);  // Wait PVU
+        // Configure: ~4 second timeout (LSI ~40kHz, prescaler 256, reload 625)
+        IWDG->PSCR = 0x06;        // Prescaler 256
+        IWDG->RLDR = 0x0271;      // Reload value 625
+        IWDG->CTLR = 0xAAAA;      // Reload to apply
+    }
+    IWDG->CTLR = 0xAAAA;          // Kick watchdog
 }
 
 void BMCU_Hardware::SetMotorPower(int lane, int pwm_val) {

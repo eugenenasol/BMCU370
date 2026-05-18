@@ -56,17 +56,17 @@ AS5600_soft_IIC::~AS5600_soft_IIC()
 {
     if (numbers > 0)
     {
-        delete IO_SDA;
-        delete IO_SCL;
-        delete port_SDA;
-        delete port_SCL;
-        delete pin_SDA;
-        delete pin_SCL;
-        delete online;
-        delete magnet_stu;
-        delete error;
-        delete raw_angle;
-        delete data;
+        delete[] IO_SDA;
+        delete[] IO_SCL;
+        delete[] port_SDA;
+        delete[] port_SCL;
+        delete[] pin_SDA;
+        delete[] pin_SCL;
+        delete[] online;
+        delete[] magnet_stu;
+        delete[] error;
+        delete[] raw_angle;
+        delete[] data;
     }
 }
 

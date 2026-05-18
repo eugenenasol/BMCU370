@@ -236,7 +236,10 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
     }
 
     // Region 2: Work Zone (tolerance to 0.30V) - Orange Strobe
-    float freq = 1.0f + (abs_error - tol) * (14.0f / (0.30f - tol));
+    // Safe division: prevent division by zero when pressure_tolerance ≈ 0.30
+    float denom = 0.30f - tol;
+    if (denom < 0.001f) denom = 0.001f;
+    float freq = 1.0f + (abs_error - tol) * (14.0f / denom);
     uint32_t period_ms = (uint32_t)(1000.0f / freq);
     bool blink_on = (_hal->GetTimeMS() / (period_ms / 2)) % 2 == 0;
 
@@ -519,12 +522,39 @@ void MMU_Logic::motor_motion_switch() {
   // Logic mostly identical to before, updating member vars
 
   for (int i = 0; i < 4; i++) {
-    if (motors[i].motion == LaneMotionState::velocity_control)
+    if (motors[i].motion == LaneMotionState::velocity_control) {
+      if (i != num) {
+        if (motors[i].state_entry_time == 0)
+          motors[i].state_entry_time = _hal->GetTimeMS();
+        if (_hal->GetTimeMS() - motors[i].state_entry_time > 5000) {
+          motors[i].SetMotion(LaneMotionState::stop);
+          filament_now_position[i] = filament_idle;
+        }
+      }
       continue;
-    if (motors[i].motion == LaneMotionState::pressure_ctrl_in_use)
+    }
+    if (motors[i].motion == LaneMotionState::pressure_ctrl_in_use) {
+      if (i != num) {
+        if (motors[i].state_entry_time == 0)
+          motors[i].state_entry_time = _hal->GetTimeMS();
+        if (_hal->GetTimeMS() - motors[i].state_entry_time > 5000) {
+          motors[i].SetMotion(LaneMotionState::stop);
+          filament_now_position[i] = filament_idle;
+        }
+      }
       continue;
-    if (motors[i].motion == LaneMotionState::feed_to_extruder)
+    }
+    if (motors[i].motion == LaneMotionState::feed_to_extruder) {
+      if (i != num) {
+        if (motors[i].state_entry_time == 0)
+          motors[i].state_entry_time = _hal->GetTimeMS();
+        if (_hal->GetTimeMS() - motors[i].state_entry_time > 5000) {
+          motors[i].SetMotion(LaneMotionState::stop);
+          filament_now_position[i] = filament_idle;
+        }
+      }
       continue;
+    }
 
     if (i != num) {
       filament_now_position[i] = filament_idle;

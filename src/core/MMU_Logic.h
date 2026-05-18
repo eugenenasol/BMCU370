@@ -95,6 +95,7 @@ public:
   int CHx;
   LaneMotionState motion = LaneMotionState::stop;
   uint64_t motor_stop_time = 0;
+  uint64_t state_entry_time = 0;
   pressure_control_enum pressure_ctrl = pressure_control_enum::all;
   MOTOR_PID PID_speed;
   MOTOR_PID PID_pressure;
@@ -125,6 +126,7 @@ public:
   void SetMotion(LaneMotionState m) {
     if (motion != m) {
       motion = m;
+      state_entry_time = 0; // will be set by caller via external timestamp, or use 0 as sentinel
       PID_speed.Clear();
       accumulated_distance = 0;
       current_velocity_set = 0;

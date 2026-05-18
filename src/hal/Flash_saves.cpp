@@ -83,7 +83,7 @@ bool Flash_saves(void *buf, uint32_t length, uint32_t address)
     if (page_num == 0) page_num = 1; // Safety
     uint16_t *data_ptr = (uint16_t *)buf;
 
-    // __disable_irq(); // Removed to prevent serial corruption during Flash erase/write
+    __disable_irq();
     FLASH_Unlock();
 
     FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
@@ -111,6 +111,6 @@ bool Flash_saves(void *buf, uint32_t length, uint32_t address)
     }
 
     FLASH_Lock();
-    // __enable_irq(); // Removed to prevent serial corruption
+    __enable_irq();
     return (FLASHStatus == FLASH_COMPLETE);
 }
