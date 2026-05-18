@@ -40,7 +40,17 @@ void BMCU_Hardware::DelayMS(uint32_t ms) {
 }
 
 void BMCU_Hardware::WatchdogReset() {
-    IWDG->CTLR = 0xAAAA; // Reload Independent Watchdog
+    // CTLR is write-only on CH32V203 — cannot read to check state.
+    // Use static flag to run initialization only once.
+    static bool iwdg_initialized = false;
+    if (!iwdg_initialized) {
+        IWDG->CTLR = 0x5555;   // Unlock PSCR and RLDR for write
+        IWDG->PSCR = 0x06;     // Prescaler /256 (LSI ~40kHz → tick ~6.4ms)
+        IWDG->RLDR = 0x0271;   // Reload 625 ticks → timeout ~4 seconds
+        IWDG->CTLR = 0xCCCC;   // Start watchdog
+        iwdg_initialized = true;
+    }
+    IWDG->CTLR = 0xAAAA;       // Kick watchdog (reload counter)
 }
 
 void BMCU_Hardware::SetMotorPower(int lane, int pwm_val) {

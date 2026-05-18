@@ -12,7 +12,7 @@ enum class LanePresenceStatus
 {
     offline,
     online,
-    NFC_waiting
+    NFC_waiting,  // Reserved for future NFC filament detection (not yet implemented)
 };
 
 // Lane Motion State
