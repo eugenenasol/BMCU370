@@ -100,7 +100,7 @@ void MMU_Logic::UpdateConnectivity(bool online) {
 }
 
 void MMU_Logic::SaveSettings() {
-  Flash_saves(&data_save, sizeof(data_save), use_flash_addr);
+  Flash_ConfigSave(&data_save, sizeof(data_save));
   Bambubus_need_to_save = false;
 }
 
@@ -127,12 +127,9 @@ void MMU_Logic::SetMovePID(float p, float i, float d, float zero) {
 }
 
 void MMU_Logic::LoadSettings() {
-  flash_save_struct *ptr = (flash_save_struct *)(uintptr_t)(use_flash_addr);
   bool need_defaults = true;
-
-  if (ptr->check == 0x40614061) {
-    if (ptr->version == STRUCT_VERSION) {
-      __builtin_memcpy(&data_save, ptr, sizeof(data_save));
+  if (Flash_ConfigLoad(&data_save, sizeof(data_save), NULL)) {
+    if (data_save.check == 0x40614061 && data_save.version == STRUCT_VERSION) {
       need_defaults = false;
     }
   }
@@ -148,11 +145,11 @@ void MMU_Logic::LoadSettings() {
     data_save.boost_pwm = 350.0f;
     data_save.boost_time_ms = 50;
     data_save.retract_deadzone = 1.2f;
-    data_save.pressure_min_pwm = 180.0f;
+    data_save.pressure_min_pwm = 570.0f;  // Hardware measured: motor deadzone ~550 PWM
     data_save.move_p = 25.0f;
     data_save.move_i = 80.0f;
     data_save.move_d = 0.0f;
-    data_save.move_pwm_zero = 200.0f;
+    data_save.move_pwm_zero = 570.0f;   // Hardware measured: motor deadzone ~550 PWM
     data_save.version = STRUCT_VERSION;
     data_save.check = 0x40614061;
     SetNeedToSave();
@@ -240,7 +237,10 @@ void MMU_Logic::UpdateLEDStatus(int channel) {
     }
 
     // Region 2: Work Zone (tolerance to 0.30V) - Orange Strobe
-    float freq = 1.0f + (abs_error - tol) * (14.0f / (0.30f - tol));
+    // Safe division: prevent division by zero when pressure_tolerance ≈ 0.30
+    float denom = 0.30f - tol;
+    if (denom < 0.001f) denom = 0.001f;
+    float freq = 1.0f + (abs_error - tol) * (14.0f / denom);
     uint32_t period_ms = (uint32_t)(1000.0f / freq);
     bool blink_on = (_hal->GetTimeMS() / (period_ms / 2)) % 2 == 0;
 
@@ -372,7 +372,8 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
           } else if (error < -tol) {
             x = m.PID_pressure.Calculate(error + tol, time_E);
           } else {
-            m.PID_pressure.Clear();
+            // Pass error=0 to Calculate() — preserves I-term for smooth dead-zone exit
+            m.PID_pressure.Calculate(0.0f, time_E);
           }
 
           // Min PWM Floor to overcome motor deadzone
@@ -435,14 +436,17 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
 
         // Trigger 2: Stall (configurable timeout)
         if (__builtin_fabsf(x) > 900 && __builtin_fabsf(now_speed) < 5.0f) {
+          __disable_irq();
           if (m.stall_timer == 0) m.stall_timer = _hal->GetTimeMS();
-          if (_hal->GetTimeMS() - m.stall_timer > _fte.stall_ms) {
+          uint32_t stall_snapshot = m.stall_timer;
+          __enable_irq();
+          if (_hal->GetTimeMS() - stall_snapshot > _fte.stall_ms) {
             m.SetMotion(LaneMotionState::stop);
             _fte.done = true; _fte.active = false;
             _fte.reason = StopReason::stall;
             _hal->SetMotorPower(CHx, 0); return;
           }
-        } else { m.stall_timer = 0; }
+        } else { __disable_irq(); m.stall_timer = 0; __enable_irq(); }
 
         // Trigger 3: Distance
         if (m.accumulated_distance >= _fte.max_mm) {
@@ -456,14 +460,17 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
       // Normal Stall Detection (500ms)
       if (m.motion != LaneMotionState::feed_to_extruder &&
           __builtin_fabsf(x) > 900 && __builtin_fabsf(now_speed) < 5.0f) {
+        __disable_irq();
         if (m.stall_timer == 0)
           m.stall_timer = _hal->GetTimeMS();
-        if (_hal->GetTimeMS() - m.stall_timer > 500) {
+        uint32_t stall_snapshot = m.stall_timer;
+        __enable_irq();
+        if (_hal->GetTimeMS() - stall_snapshot > 500) {
           m.SetMotion(LaneMotionState::stop);
           x = 0;
         }
       } else if (m.motion != LaneMotionState::feed_to_extruder) {
-        m.stall_timer = 0;
+        __disable_irq(); m.stall_timer = 0; __enable_irq();
       }
     }
   } else {
@@ -523,12 +530,39 @@ void MMU_Logic::motor_motion_switch() {
   // Logic mostly identical to before, updating member vars
 
   for (int i = 0; i < 4; i++) {
-    if (motors[i].motion == LaneMotionState::velocity_control)
+    if (motors[i].motion == LaneMotionState::velocity_control) {
+      if (i != num) {
+        if (motors[i].state_entry_time == 0)
+          motors[i].state_entry_time = _hal->GetTimeMS();
+        if (_hal->GetTimeMS() - motors[i].state_entry_time > 5000) {
+          motors[i].SetMotion(LaneMotionState::stop);
+          filament_now_position[i] = filament_idle;
+        }
+      }
       continue;
-    if (motors[i].motion == LaneMotionState::pressure_ctrl_in_use)
+    }
+    if (motors[i].motion == LaneMotionState::pressure_ctrl_in_use) {
+      if (i != num) {
+        if (motors[i].state_entry_time == 0)
+          motors[i].state_entry_time = _hal->GetTimeMS();
+        if (_hal->GetTimeMS() - motors[i].state_entry_time > 5000) {
+          motors[i].SetMotion(LaneMotionState::stop);
+          filament_now_position[i] = filament_idle;
+        }
+      }
       continue;
-    if (motors[i].motion == LaneMotionState::feed_to_extruder)
+    }
+    if (motors[i].motion == LaneMotionState::feed_to_extruder) {
+      if (i != num) {
+        if (motors[i].state_entry_time == 0)
+          motors[i].state_entry_time = _hal->GetTimeMS();
+        if (_hal->GetTimeMS() - motors[i].state_entry_time > 5000) {
+          motors[i].SetMotion(LaneMotionState::stop);
+          filament_now_position[i] = filament_idle;
+        }
+      }
       continue;
+    }
 
     if (i != num) {
       filament_now_position[i] = filament_idle;

@@ -34,6 +34,35 @@ namespace KlipperCLI {
     // Pointer to track which transport received the request currently being processed
     static I_MMU_Transport* _current_response_transport = nullptr;
 
+    // JSON string escape helper: prevents injection via user-supplied strings
+    void json_escape(const char* src, char* dst, size_t dst_size) {
+        if (!src || !dst || dst_size == 0) return;
+        size_t i = 0, j = 0;
+        while (src[i] && j < dst_size - 1) {
+            unsigned char c = (unsigned char)src[i];
+            if (c == '"') {
+                if (j + 1 < dst_size - 1) { dst[j++] = '\\'; dst[j++] = '"'; }
+            } else if (c == '\\') {
+                if (j + 1 < dst_size - 1) { dst[j++] = '\\'; dst[j++] = '\\'; }
+            } else if (c == '\n') {
+                if (j + 1 < dst_size - 1) { dst[j++] = '\\'; dst[j++] = 'n'; }
+            } else if (c == '\r') {
+                if (j + 1 < dst_size - 1) { dst[j++] = '\\'; dst[j++] = 'r'; }
+            } else if (c == '\t') {
+                if (j + 1 < dst_size - 1) { dst[j++] = '\\'; dst[j++] = 't'; }
+            } else if (c < 32) {
+                // Control characters: skip (or encode as \\u00XX)
+                if (j + 5 < dst_size - 1) {
+                    j += snprintf(dst + j, dst_size - j, "\\u%04x", c);
+                }
+            } else {
+                dst[j++] = c;
+            }
+            i++;
+        }
+        dst[j] = '\0';
+    }
+
     const char* get_sign(float val) { return (val < 0) ? "-" : ""; }
 
     // Response Helper
@@ -375,7 +404,8 @@ namespace KlipperCLI {
          }
          
           offset += snprintf(global_json_buf + offset, sizeof(global_json_buf) - offset, "}\r\n");
-         if (_transport) _transport->Write((const uint8_t*)global_json_buf, offset);
+          I_MMU_Transport* t = _current_response_transport ? _current_response_transport : _transport;
+          if (t) t->Write((const uint8_t*)global_json_buf, offset);
     }
     
     void HandleSetTolerance(int id, JsonObject args) {
@@ -515,9 +545,11 @@ namespace KlipperCLI {
             char truncated[101];
             strncpy(truncated, json_str, 100);
             truncated[100] = '\0';
-            snprintf(err_buf, sizeof(err_buf), 
+char escaped_truncated[256];
+            json_escape(truncated, escaped_truncated, sizeof(escaped_truncated));
+            snprintf(err_buf, sizeof(err_buf),
                 "{\"ok\":false,\"msg\":\"JSON Parse Error\",\"received\":\"%s\",\"error\":\"%s\"}\n",
-                truncated, error.c_str());
+                escaped_truncated, error.c_str());
             I_MMU_Transport* t = _current_response_transport ? _current_response_transport : _transport;
             if (t) t->Write((const uint8_t*)err_buf, strlen(err_buf));
             return;

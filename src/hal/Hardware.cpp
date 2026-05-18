@@ -660,8 +660,8 @@ namespace Hardware {
         } else if (PWM < 0) {
             set2 = -PWM;
         } else {
-            set1 = 1000;
-            set2 = 1000;
+            set1 = 0;
+            set2 = 0;   // Coast/brake: both FETs off
         }
         switch (channel) {
         case 3:

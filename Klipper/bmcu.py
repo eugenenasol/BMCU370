@@ -506,12 +506,15 @@ class BMCU:
         if not wait_s or wait_s <= 0:
             return
         wait_s = max(0.0, min(wait_s, 5.0))
-        end = self.reactor.monotonic() + wait_s
-        while self.reactor.monotonic() < end:
-            self.reactor.pause(self.reactor.monotonic() + 0.05)
+        end = time.time() + wait_s
+        while time.time() < end:
+            # Direct serial read — bypasses frozen reactor
+            self._pump_rx(0.05)
             if pkt_id is not None and pkt_id in self.last_rx_by_id:
                 gcmd.respond_info("BMCU: reply: " + json.dumps(self.last_rx_by_id[pkt_id])[:1200])
                 return
+            # Small sleep, not full reactor pause
+            self.reactor.pause(self.reactor.monotonic() + 0.01)
         gcmd.respond_info(f"BMCU: no reply within {wait_s:.2f}s (id={pkt_id})")
 
     # -----------------------------
@@ -680,12 +683,13 @@ class BMCU:
         gcmd.respond_info(f"FEED_TO_EXTRUDER lane={lane} id={pkt_id} (Timeout {wait_s:.1f}s)")
         
         if ok and wait_s > 0:
-            end = self.reactor.monotonic() + wait_s
-            while self.reactor.monotonic() < end:
-                self.reactor.pause(self.reactor.monotonic() + 0.05)
+            end = time.time() + wait_s
+            while time.time() < end:
+                self._pump_rx(0.05)
                 if self.fte_stopped_by != "":
                     gcmd.respond_info(f"FTE Completed. Stopped by: {self.fte_stopped_by}. Distance: {self.fte_dist_mm}mm")
                     return
+                self.reactor.pause(self.reactor.monotonic() + 0.01)
             gcmd.respond_info("FTE Timeout! Klipper didn't receive completion event.")
 
     def cmd_BMCU_CALIBRATE(self, gcmd):
