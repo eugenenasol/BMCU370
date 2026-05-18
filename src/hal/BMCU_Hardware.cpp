@@ -40,18 +40,17 @@ void BMCU_Hardware::DelayMS(uint32_t ms) {
 }
 
 void BMCU_Hardware::WatchdogReset() {
-    // Initialize IWDG on first call (if not already configured)
-    if (!(IWDG->CTLR & 0x01)) {  // Check if IWDG is not yet enabled
-        IWDG->CTLR |= 0x01;       // Enable IWDG (LSI starts)
-        // Wait for registers to be accessible (CH32V203: status register is STATR)
-        while (IWDG->STATR & 0x02);  // Wait RVU (Reload Value Update)
-        while (IWDG->STATR & 0x01);  // Wait PVU (Prescaler Value Update)
-        // Configure: ~4 second timeout (LSI ~40kHz, prescaler 256, reload 625)
-        IWDG->PSCR = 0x06;        // Prescaler 256
-        IWDG->RLDR = 0x0271;      // Reload value 625
-        IWDG->CTLR = 0xAAAA;      // Reload to apply
+    // CTLR is write-only on CH32V203 — cannot read to check state.
+    // Use static flag to run initialization only once.
+    static bool iwdg_initialized = false;
+    if (!iwdg_initialized) {
+        IWDG->CTLR = 0x5555;   // Unlock PSCR and RLDR for write
+        IWDG->PSCR = 0x06;     // Prescaler /256 (LSI ~40kHz → tick ~6.4ms)
+        IWDG->RLDR = 0x0271;   // Reload 625 ticks → timeout ~4 seconds
+        IWDG->CTLR = 0xCCCC;   // Start watchdog
+        iwdg_initialized = true;
     }
-    IWDG->CTLR = 0xAAAA;          // Kick watchdog
+    IWDG->CTLR = 0xAAAA;       // Kick watchdog (reload counter)
 }
 
 void BMCU_Hardware::SetMotorPower(int lane, int pwm_val) {

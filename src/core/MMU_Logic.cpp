@@ -141,11 +141,11 @@ void MMU_Logic::LoadSettings() {
     data_save.boost_pwm = 350.0f;
     data_save.boost_time_ms = 50;
     data_save.retract_deadzone = 1.2f;
-    data_save.pressure_min_pwm = 180.0f;
+    data_save.pressure_min_pwm = 570.0f;  // Hardware measured: motor deadzone ~550 PWM
     data_save.move_p = 25.0f;
     data_save.move_i = 80.0f;
     data_save.move_d = 0.0f;
-    data_save.move_pwm_zero = 200.0f;
+    data_save.move_pwm_zero = 570.0f;   // Hardware measured: motor deadzone ~550 PWM
     data_save.version = STRUCT_VERSION;
     data_save.check = 0x40614061;
     SetNeedToSave();

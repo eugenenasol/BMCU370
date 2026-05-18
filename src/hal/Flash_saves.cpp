@@ -175,14 +175,57 @@ bool Flash_ConfigSave(void *buf, uint16_t length) {
         Flash_ConfigEraseAll();
         next_idx = 0; current_seq = 0;
     }
-    static uint8_t page_buf[FLASH_PAGE_SIZE];
-    ConfigPageHeader *hdr = (ConfigPageHeader *)page_buf;
-    hdr->magic = CONFIG_MAGIC;
-    hdr->sequence_number = current_seq + 1;
-    hdr->data_size = length;
-    hdr->crc = crc16_ccitt((const uint8_t *)buf, length);
-    for (uint16_t i = 0; i < length; i++) page_buf[CONFIG_HEADER_SIZE + i] = ((uint8_t *)buf)[i];
-    return Flash_saves(page_buf, CONFIG_HEADER_SIZE + length, CONFIG_FLASH_BASE + (uint32_t)next_idx * FLASH_PAGE_SIZE);
+
+    // Build header on stack (12 bytes only — no 4KB static buffer needed)
+    ConfigPageHeader hdr;
+    hdr.magic = CONFIG_MAGIC;
+    hdr.sequence_number = current_seq + 1;
+    hdr.data_size = length;
+    hdr.crc = crc16_ccitt((const uint8_t *)buf, length);
+
+    uint32_t page_addr = CONFIG_FLASH_BASE + (uint32_t)next_idx * FLASH_PAGE_SIZE;
+
+    // Erase target page, then write header + payload in two passes.
+    // Flash_saves erases before writing; we call it twice but both writes
+    // are to different offsets within the already-erased page.
+    // To avoid double-erase we write the full region: header padded to
+    // alignment + payload. Use a minimal approach: erase once via a small
+    // helper, then two program passes.
+
+    __disable_irq();
+    FLASH_Unlock();
+    FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
+    IWDG->CTLR = 0xAAAA;
+
+    // Step 1: Erase the target page
+    FLASHStatus = FLASH_ErasePage(page_addr);
+    if (FLASHStatus != FLASH_COMPLETE) {
+        FLASH_Lock(); __enable_irq(); return false;
+    }
+
+    // Step 2: Write header (12 bytes)
+    uint16_t *src = (uint16_t *)&hdr;
+    uint32_t addr = page_addr;
+    for (uint16_t i = 0; i < CONFIG_HEADER_SIZE / 2; i++, addr += 2, src++) {
+        FLASHStatus = FLASH_ProgramHalfWord(addr, *src);
+        if (FLASHStatus != FLASH_COMPLETE) {
+            FLASH_Lock(); __enable_irq(); return false;
+        }
+    }
+
+    // Step 3: Write payload
+    src = (uint16_t *)buf;
+    uint16_t words = (length + 1) / 2; // Round up to half-words
+    for (uint16_t i = 0; i < words; i++, addr += 2, src++) {
+        FLASHStatus = FLASH_ProgramHalfWord(addr, *src);
+        if (FLASHStatus != FLASH_COMPLETE) {
+            FLASH_Lock(); __enable_irq(); return false;
+        }
+    }
+
+    FLASH_Lock();
+    __enable_irq();
+    return true;
 }
 
 bool Flash_ConfigLoad(void *buf, uint16_t max_len, uint16_t *out_len) {
