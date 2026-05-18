@@ -368,8 +368,8 @@ void MMU_Logic::RunMotorChannel(int CHx, float time_E) {
           } else if (error < -tol) {
             x = m.PID_pressure.Calculate(error + tol, time_E);
           } else {
-            // Pass 0 instead of clearing PID — preserves I-term for smooth dead-zone exit
-            m.PID_pressure.Calculate(0.0f);
+            // Pass error=0 to Calculate() — preserves I-term for smooth dead-zone exit
+            m.PID_pressure.Calculate(0.0f, time_E);
           }
 
           // Min PWM Floor to overcome motor deadzone

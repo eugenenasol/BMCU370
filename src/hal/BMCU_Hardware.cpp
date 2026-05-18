@@ -43,9 +43,9 @@ void BMCU_Hardware::WatchdogReset() {
     // Initialize IWDG on first call (if not already configured)
     if (!(IWDG->CTLR & 0x01)) {  // Check if IWDG is not yet enabled
         IWDG->CTLR |= 0x01;       // Enable IWDG (LSI starts)
-        // Wait for registers to be accessible
-        while (IWDG->SR & 0x02);  // Wait RVU
-        while (IWDG->SR & 0x01);  // Wait PVU
+        // Wait for registers to be accessible (CH32V203: status register is STATR)
+        while (IWDG->STATR & 0x02);  // Wait RVU (Reload Value Update)
+        while (IWDG->STATR & 0x01);  // Wait PVU (Prescaler Value Update)
         // Configure: ~4 second timeout (LSI ~40kHz, prescaler 256, reload 625)
         IWDG->PSCR = 0x06;        // Prescaler 256
         IWDG->RLDR = 0x0271;      // Reload value 625
